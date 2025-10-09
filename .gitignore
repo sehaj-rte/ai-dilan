@@ -66,4 +66,19 @@ Thumbs.db
 # Coverage
 .coverage
 htmlcov/
-env
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+env/
+venv/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log

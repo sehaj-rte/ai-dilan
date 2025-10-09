@@ -38,8 +38,8 @@ DB_NAME=dilan_ai_db
 DB_USER=your_username
 DB_PASSWORD=your_password
 
-# AWS S3 Configuration - ALREADY CONFIGURED
-S3_BUCKET_NAME=ai-dilan
+# AWS S3 Configuration - ADD YOUR CREDENTIALS
+S3_BUCKET_NAME=your_s3_bucket_name
 S3_ACCESS_KEY_ID=your_s3_access_key_id
 S3_SECRET_KEY=your_s3_secret_key
 S3_REGION=us-east-1
