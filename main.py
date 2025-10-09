@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config.settings import APP_NAME, DEBUG, ALLOWED_ORIGINS
 from config.database import create_tables
-from routes import auth, experts, chat, voice, knowledge_base
+from routes import auth, experts, chat, voice, knowledge_base, images, conversation
 
 # Create FastAPI app
 app = FastAPI(
@@ -20,6 +20,7 @@ async def startup_event():
         # Import models to ensure they're registered
         from models.user_db import UserDB
         from models.file_db import FileDB
+        from models.expert_db import ExpertDB
         
         # Create tables
         create_tables()
@@ -43,7 +44,9 @@ app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(experts.router, prefix="/experts", tags=["Experts"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
 app.include_router(voice.router, prefix="/voice", tags=["Voice"])
+app.include_router(conversation.router, prefix="/conversation", tags=["Conversation"])
 app.include_router(knowledge_base.router, prefix="/knowledge-base", tags=["Knowledge Base"])
+app.include_router(images.router, prefix="/images", tags=["Images"])
 
 @app.get("/")
 def read_root():

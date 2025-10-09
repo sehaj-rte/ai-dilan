@@ -15,6 +15,7 @@ def init_database():
         
         # Import all models to ensure they're registered with Base
         from models.user_db import UserDB
+        from models.expert_db import ExpertDB
         
         # Create all tables
         create_tables()
@@ -22,6 +23,7 @@ def init_database():
         print("✅ Database tables created successfully!")
         print("📋 Created tables:")
         print("   - users")
+        print("   - experts")
         
         return True
         

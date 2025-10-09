@@ -1,10 +1,8 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.declarative import declarative_base
+from config.database import Base
 from datetime import datetime
 import uuid
-
-Base = declarative_base()
 
 class FileDB(Base):
     __tablename__ = "files"

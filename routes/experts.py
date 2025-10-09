@@ -1,16 +1,40 @@
-from fastapi import APIRouter, HTTPException, status
-from typing import List
+from fastapi import APIRouter, HTTPException, status, Depends
+from typing import List, Dict, Any
+from sqlalchemy.orm import Session
+from config.database import get_db
 from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
 from controllers.expert_controller import (
     create_expert, get_expert, list_experts, upload_expert_content, 
-    ask_expert, update_expert, delete_expert
+    ask_expert, update_expert, delete_expert, create_expert_with_elevenlabs,
+    get_expert_from_db, list_experts_from_db
 )
+from pydantic import BaseModel
 
 router = APIRouter()
 
+class ExpertCreateRequest(BaseModel):
+    name: str
+    description: str = None
+    system_prompt: str
+    voice_id: str
+    avatar_base64: str = None  # Base64 encoded image data
+    selected_files: List[str] = []
+
 @router.post("/", response_model=dict)
-def create_new_expert(expert_data: ExpertCreate):
-    """Create a new expert"""
+async def create_new_expert(expert_data: ExpertCreateRequest, db: Session = Depends(get_db)):
+    """Create a new expert with ElevenLabs integration"""
+    expert_dict = expert_data.dict()
+    result = await create_expert_with_elevenlabs(db, expert_dict)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    return result
+
+@router.post("/legacy", response_model=dict)
+def create_new_expert_legacy(expert_data: ExpertCreate):
+    """Create a new expert (legacy method)"""
     result = create_expert(expert_data)
     if not result["success"]:
         raise HTTPException(
@@ -20,8 +44,19 @@ def create_new_expert(expert_data: ExpertCreate):
     return result
 
 @router.get("/", response_model=dict)
-def get_all_experts():
-    """Get all experts"""
+def get_all_experts(db: Session = Depends(get_db)):
+    """Get all experts from database"""
+    result = list_experts_from_db(db)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result["error"]
+        )
+    return result
+
+@router.get("/legacy", response_model=dict)
+def get_all_experts_legacy():
+    """Get all experts (legacy method)"""
     result = list_experts()
     if not result["success"]:
         raise HTTPException(
@@ -31,8 +66,19 @@ def get_all_experts():
     return result
 
 @router.get("/{expert_id}", response_model=dict)
-def get_expert_by_id(expert_id: str):
-    """Get expert by ID"""
+def get_expert_by_id(expert_id: str, db: Session = Depends(get_db)):
+    """Get expert by ID from database"""
+    result = get_expert_from_db(db, expert_id)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result["error"]
+        )
+    return result
+
+@router.get("/legacy/{expert_id}", response_model=dict)
+def get_expert_by_id_legacy(expert_id: str):
+    """Get expert by ID (legacy method)"""
     result = get_expert(expert_id)
     if not result["success"]:
         raise HTTPException(
