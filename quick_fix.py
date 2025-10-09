@@ -18,7 +18,7 @@ def update_env_for_sqlite():
 DATABASE_URL=sqlite:///./dilan_ai.db
 
 # AWS S3 Configuration
-S3_BUCKET_NAME=ai-dilan
+S3_BUCKET_NAME=your_s3_bucket_name
 S3_ACCESS_KEY_ID=your_s3_access_key_id
 S3_SECRET_KEY=your_s3_secret_key
 S3_REGION=us-east-1
