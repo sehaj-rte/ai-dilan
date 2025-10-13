@@ -13,9 +13,9 @@ class EmbeddingService:
     """Service to chunk text and generate embeddings for knowledge base"""
     
     def __init__(self):
-        # Use hardcoded key directly (temporary for development)
-        # self.openai_api_key = "REMOVED_API_KEY"
-
+        # Get OpenAI API key from environment
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        
         if self.openai_api_key:
             openai.api_key = self.openai_api_key
         else:
