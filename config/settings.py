@@ -47,3 +47,4 @@ ALLOWED_ORIGINS = [
     "https://your-frontend-domain.com",
     "https://ai-dilan.onrender.com"
 ]
+
