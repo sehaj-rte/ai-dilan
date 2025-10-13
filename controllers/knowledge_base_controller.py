@@ -59,13 +59,12 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None) -> Dic
         
         logger.info("File validation passed")
         
-        # Extract text and metadata first (temporarily disabled)
-        extraction_result = None
-        # extraction_result = document_processor.extract_text(
-        #     file_content=file_content,
-        #     content_type=file.content_type,
-        #     filename=file.filename
-        # )
+        # Extract text and metadata first
+        extraction_result = document_processor.extract_text(
+            file_content=file_content,
+            content_type=file.content_type,
+            filename=file.filename
+        )
         
         # Upload file to S3 and save metadata
         logger.info("Starting file service upload")
@@ -333,11 +332,15 @@ async def process_expert_files(expert_id: str, agent_id: str, selected_files: li
                         logger.info(f"✅ Successfully downloaded from S3: {s3_key}")
                         print(f"✅ Successfully downloaded from S3: {s3_key}")
                 
+                # Get file record from database for pre-extracted text
+                logger.info(f"📂 Getting file record from database for {file_id}")
+                print(f"📂 Getting file record from database for {file_id}")
+                file_record = file_service.db.query(FileDB).filter(FileDB.id == uuid.UUID(file_id)).first()
+                
                 # Fallback to database if S3 failed or content not in S3
                 if not file_content:
                     logger.info(f"📂 Trying to get file content from database for {file_id}")
                     print(f"📂 Trying to get file content from database for {file_id}")
-                    file_record = file_service.db.query(FileDB).filter(FileDB.id == uuid.UUID(file_id)).first()
                     
                     if file_record and file_record.content:
                         file_content = file_record.content
@@ -351,14 +354,35 @@ async def process_expert_files(expert_id: str, agent_id: str, selected_files: li
                         failed_files.append({"file_id": file_id, "error": f"No content available. Please re-upload '{filename}'"})
                         continue
                 
-                logger.info(f"📝 Extracting text from {filename}")
+                logger.info(f"📝 Using pre-extracted text from database for {filename}")
                 
-                # Step 2: Extract text from file
-                extraction_result = document_processor.extract_text(
-                    file_content=file_content,
-                    content_type=file_data.get('type', 'text/plain'),
-                    filename=filename
-                )
+                # Step 2: Use pre-extracted text from database
+                # If file was uploaded before the text extraction feature was enabled, we'll need to extract it now
+                if file_record and file_record.extracted_text:
+                    # Use pre-extracted text
+                    extracted_text = file_record.extracted_text
+                    extraction_result = {
+                        "success": True,
+                        "text": extracted_text,
+                        "content_type": file_data.get('type', 'text/plain'),
+                        "filename": filename,
+                        "word_count": file_record.word_count or len(extracted_text.split()),
+                        "metadata": {
+                            "document_type": file_record.document_type,
+                            "language": file_record.language,
+                            "page_count": file_record.page_count,
+                            "has_images": file_record.has_images,
+                            "has_tables": file_record.has_tables,
+                            "extracted_text_preview": file_record.extracted_text_preview or extracted_text[:500] + "..." if len(extracted_text) > 500 else extracted_text
+                        }
+                    }
+                else:
+                    # Extract text from file (fallback for older uploads)
+                    extraction_result = document_processor.extract_text(
+                        file_content=file_content,
+                        content_type=file_data.get('type', 'text/plain'),
+                        filename=filename
+                    )
                 
                 if not extraction_result["success"]:
                     logger.error(f"\U0001f6ab Text extraction failed for {filename}: {extraction_result.get('error')}")
