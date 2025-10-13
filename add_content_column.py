@@ -11,6 +11,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 def add_content_column():
     """Add content column to files table as fallback storage"""
     try:
