@@ -1,7 +1,0 @@
-This is a test document for verifying text extraction functionality.
-
-The document contains multiple paragraphs to test the extraction process.
-
-This is the third paragraph with some additional content.
-
-And this is the final paragraph to complete the test document.
