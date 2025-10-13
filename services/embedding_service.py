@@ -14,7 +14,7 @@ class EmbeddingService:
     
     def __init__(self):
         # Use hardcoded key directly (temporary for development)
-        self.openai_api_key = "REMOVED_API_KEY"
+        # self.openai_api_key = "REMOVED_API_KEY"
 
         if self.openai_api_key:
             openai.api_key = self.openai_api_key

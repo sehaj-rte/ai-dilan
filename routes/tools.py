@@ -12,7 +12,7 @@ from services.expert_service import ExpertService
 load_dotenv()
 
 # Set OpenAI API key (use hardcoded key for development)
-openai_api_key = "REMOVED_API_KEY"
+# openai_api_key = "REMOVED_API_KEY"
 if openai_api_key:
     os.environ["OPENAI_API_KEY"] = openai_api_key
 
