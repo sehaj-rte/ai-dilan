@@ -11,10 +11,7 @@ from services.expert_service import ExpertService
 # Load environment variables
 load_dotenv()
 
-# Set OpenAI API key (use hardcoded key for development)
-# openai_api_key = "REMOVED_API_KEY"
-if openai_api_key:
-    os.environ["OPENAI_API_KEY"] = openai_api_key
+# OpenAI API key is loaded from .env file via load_dotenv()
 
 from services.pinecone_service import PineconeService
 
