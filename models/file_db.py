@@ -30,6 +30,7 @@ class FileDB(Base):
     processing_error = Column(Text, nullable=True)  # error message if processing failed
     
     # Content metadata
+    extracted_text = Column(Text, nullable=True)  # Full extracted text content
     extracted_text_preview = Column(Text, nullable=True)  # First 500 chars for preview
     has_images = Column(Boolean, default=False)  # contains images
     has_tables = Column(Boolean, default=False)  # contains tables
@@ -61,6 +62,7 @@ class FileDB(Base):
             "processing_error": self.processing_error,
             
             # Content metadata
+            "extracted_text": self.extracted_text,
             "extracted_text_preview": self.extracted_text_preview,
             "has_images": self.has_images,
             "has_tables": self.has_tables,
@@ -70,17 +72,27 @@ class FileDB(Base):
         }
 
     def to_summary_dict(self):
-        """Lightweight version for document selection"""
+        """Lightweight version for document selection (excludes full extracted_text for performance)"""
         return {
             "id": str(self.id),
             "name": self.name,
+            "original_name": self.original_name,
             "type": self.type,
             "document_type": self.document_type,
             "size": self.size,
             "word_count": self.word_count,
+            "page_count": self.page_count,
             "description": self.description,
             "tags": self.tags or [],
             "processing_status": self.processing_status,
+            "processing_error": self.processing_error,
+            "url": self.url,
+            "s3_key": self.s3_key,
+            "has_images": self.has_images,
+            "has_tables": self.has_tables,
+            "language": self.language,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            # Only include preview, not full text for performance
             "extracted_text_preview": self.extracted_text_preview
         }

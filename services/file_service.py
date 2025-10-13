@@ -69,6 +69,7 @@ class FileService:
                 page_count=metadata.get("page_count"),
                 has_images=metadata.get("has_images", False),
                 has_tables=metadata.get("has_tables", False),
+                extracted_text=extraction_result.get("text") if extraction_result and extraction_result.get("success") else None,
                 extracted_text_preview=metadata.get("extracted_text_preview"),
                 processing_status='pending'  # Set to pending since processing is disabled
             )
@@ -106,13 +107,24 @@ class FileService:
             files = query.order_by(FileDB.created_at.desc()).all()
             print(f"\U0001f389 File Service: Found {len(files)} files")
             
+            # Convert to dict but exclude full extracted_text for performance
+            files_list = []
+            for file in files:
+                file_dict = file.to_dict()
+                # Remove full extracted_text to improve performance (keep only preview)
+                file_dict.pop('extracted_text', None)
+                files_list.append(file_dict)
+            
             return {
                 "success": True,
-                "files": [file.to_dict() for file in files],
+                "files": files_list,
                 "total": len(files)
             }
             
         except Exception as e:
+            print(f"❌ Error in get_files: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {"success": False, "error": f"Database error: {str(e)}"}
     
     def get_file_by_id(self, file_id: str) -> Dict[str, Any]:

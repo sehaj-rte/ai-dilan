@@ -5,6 +5,7 @@ import uuid
 import logging
 import os
 import re
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,17 @@ class ExpertService:
             Dict containing success status and expert data
         """
         try:
+            # Handle selected_files - ensure it's a list, not a JSON string
+            selected_files = expert_data.get("selected_files", [])
+            if isinstance(selected_files, str):
+                try:
+                    selected_files = json.loads(selected_files)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Failed to parse selected_files JSON string: {selected_files}")
+                    selected_files = []
+            elif selected_files is None:
+                selected_files = []
+            
             expert = ExpertDB(
                 name=expert_data.get("name"),
                 description=expert_data.get("description"),
@@ -72,7 +84,7 @@ class ExpertService:
                 elevenlabs_agent_id=expert_data.get("elevenlabs_agent_id"),
                 avatar_url=expert_data.get("avatar_url"),
                 pinecone_index_name=expert_data.get("pinecone_index_name"),
-                selected_files=expert_data.get("selected_files", []),
+                selected_files=selected_files,
                 knowledge_base_tool_id=expert_data.get("knowledge_base_tool_id")
             )
             

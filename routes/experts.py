@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, status, Depends
-from typing import List, Dict, Any
+from fastapi import APIRouter, HTTPException, status, Depends, Request
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from config.database import get_db
 from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
@@ -8,16 +8,22 @@ from controllers.expert_controller import (
     ask_expert, update_expert, delete_expert, create_expert_with_elevenlabs,
     get_expert_from_db, list_experts_from_db, delete_expert_from_db
 )
+from controllers.knowledge_base_controller import process_expert_files
+from services.expert_service import ExpertService
 from pydantic import BaseModel
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
 
 class ExpertCreateRequest(BaseModel):
     name: str
-    description: str = None
+    description: Optional[str] = None
     system_prompt: str
+    first_message: Optional[str] = None
     voice_id: str
-    avatar_base64: str = None  # Base64 encoded image data
+    avatar_base64: Optional[str] = None  # Base64 encoded image data
     selected_files: List[str] = []
     user_id: str = "default_user"  # TODO: Get from authentication token
 
@@ -152,3 +158,49 @@ def delete_expert_by_id_legacy(expert_id: str):
             detail=result["error"]
         )
     return result
+
+@router.post("/{expert_id}/process-files", response_model=dict)
+async def process_expert_files_route(expert_id: str, file_ids: List[str], db: Session = Depends(get_db)):
+    """Manually trigger file processing for an expert"""
+    try:
+        # Get expert to retrieve agent_id
+        expert_service = ExpertService(db)
+        expert_result = expert_service.get_expert(expert_id)
+        
+        if not expert_result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Expert not found"
+            )
+        
+        expert = expert_result["expert"]
+        agent_id = expert.get("elevenlabs_agent_id")
+        
+        if not agent_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Expert does not have an associated ElevenLabs agent"
+            )
+        
+        # Process the files
+        result = await process_expert_files(
+            expert_id=expert_id,
+            agent_id=agent_id,
+            selected_files=file_ids,
+            db=db
+        )
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result["error"]
+            )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error processing expert files: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )

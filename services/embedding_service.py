@@ -21,17 +21,17 @@ class EmbeddingService:
         else:
             logger.warning("OPENAI_API_KEY not found - embedding generation will fail")
         
-        # Embedding model configuration
-        self.embedding_model = "text-embedding-3-large"  # 3072 dimensions
-        self.chunk_size = 400  # Reduced from 800 for faster processing
-        self.chunk_overlap = 50   # Reduced from 100
-        self.max_chunk_size = 500  # Reduced from 1000
+        # Embedding model configuration - matching Pinecone index dimensions
+        self.embedding_model = "text-embedding-3-large"  # 3072 dimensions, matches Pinecone index
+        self.chunk_size = 600  # Larger chunks = fewer total chunks
+        self.chunk_overlap = 100   # Better context preservation
+        self.max_chunk_size = 800  # Larger max size
         
         # Performance optimizations
-        self.batch_size = 10  # Process multiple chunks in one API call
-        self.max_concurrent_batches = 3  # Process batches concurrently
-        self.rate_limit_delay = 0.1  # Small delay between API calls
-        self.max_chunks_per_document = 1000  # Limit to prevent extremely long processing
+        self.batch_size = 50  # Much larger batches for faster processing
+        self.max_concurrent_batches = 5  # More concurrent processing
+        self.rate_limit_delay = 0.05  # Reduced delay
+        self.max_chunks_per_document = 500  # Reduced limit for faster processing
     
     def process_document(self, text: str, file_id: str, filename: str, user_id: str = None, progress_callback=None) -> Dict[str, Any]:
         """

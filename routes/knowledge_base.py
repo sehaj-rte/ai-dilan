@@ -130,3 +130,50 @@ def get_documents_for_selection(db: Session = Depends(get_db)):
         "documents": documents,
         "total": len(documents)
     }
+
+@router.get("/documents/{document_id}/details", response_model=dict)
+def get_document_details(document_id: str, db: Session = Depends(get_db)):
+    """Get detailed information about a specific document"""
+    result = get_file_by_id_controller(document_id, db)
+    
+    if not result["success"]:
+        if "not found" in result["error"].lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result["error"]
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result["error"]
+            )
+    
+    file_data = result["file"]
+    
+    # Transform to detailed format
+    document_details = {
+        "id": file_data["id"],
+        "name": file_data["name"],
+        "document_type": file_data.get("document_type", "unknown"),
+        "size": file_data["size"],
+        "word_count": file_data.get("word_count"),
+        "page_count": file_data.get("page_count"),
+        "language": file_data.get("language"),
+        "has_images": file_data.get("has_images", False),
+        "has_tables": file_data.get("has_tables", False),
+        "created_at": file_data["created_at"],
+        "updated_at": file_data.get("updated_at"),
+        "extracted_text": file_data.get("extracted_text"),
+        "extracted_text_preview": file_data.get("extracted_text_preview"),
+        "processing_status": file_data.get("processing_status", "unknown"),
+        "metadata": {
+            "file_type": file_data.get("type"),
+            "s3_key": file_data.get("s3_key"),
+            "url": file_data.get("url")
+        }
+    }
+    
+    return {
+        "success": True,
+        "document": document_details
+    }
