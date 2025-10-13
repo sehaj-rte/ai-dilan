@@ -12,7 +12,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://username:password@localho
 
 # Remove channel_binding parameter if present (causes issues with some PostgreSQL versions)
 if "channel_binding=require" in DATABASE_URL:
+    print("⚠️  Removing channel_binding=require from DATABASE_URL")
     DATABASE_URL = DATABASE_URL.replace("&channel_binding=require", "").replace("channel_binding=require&", "").replace("?channel_binding=require", "")
+    print(f"✅ Updated DATABASE_URL (password hidden)")
+
+print(f"🔌 Connecting to database: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'local'}")
 
 # Create SQLAlchemy engine with connection pool settings
 engine = create_engine(
