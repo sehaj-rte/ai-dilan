@@ -44,5 +44,6 @@ PORT = int(os.getenv("PORT", "8000"))
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Next.js frontend
     "http://127.0.0.1:3000",
-    "https://your-frontend-domain.com"
+    "https://your-frontend-domain.com",
+    "https://ai-dilan.onrender.com"
 ]

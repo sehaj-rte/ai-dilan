@@ -32,24 +32,21 @@ git push origin main
 4. **Add Environment Variables**
    Click "Advanced" → "Add Environment Variable":
    
-   Copy these from your local `.env` file:
    ```
-   ELEVENLABS_API_KEY=your_elevenlabs_api_key
-   S3_BUCKET_NAME=your_s3_bucket_name
-   S3_ACCESS_KEY_ID=your_aws_access_key
-   S3_SECRET_KEY=your_aws_secret_key
+   ELEVENLABS_API_KEY=4b757c743f73858a0b19a8947b7742c3c2acbacc947374329ae264bb61d02c2d
+   S3_BUCKET_NAME=ai-dilan
+   S3_ACCESS_KEY_ID=AKIARI5UHVTG2CWAHQUG
+   S3_SECRET_KEY=VL4UOtnQs/pd4yGHm6A0ImBCDjJRMsXTrcjyuJVn
    S3_REGION=us-east-1
-   PINECONE_API_KEY=your_pinecone_api_key
+   PINECONE_API_KEY=pcsk_59xqiJ_BoJ5jvLse9dKTT1FzmbHLCGS6GV11gfCDyRRLJPWUeTmwNnLUJ1yY3XHj3tEFkj
    PINECONE_EDUCATION_INDEX=aido-v2-index
    PINECONE_TRAVEL_INDEX=travel-guide
    PINECONE_USER_KB_INDEX=user-knowledge-base
-   OPENAI_API_KEY=your_openai_api_key
+   OPENAI_API_KEY=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
    WEBHOOK_AUTH_TOKEN=dilan-ai-pinecone-webhook-2024
    DEBUG=False
    APP_NAME=Dilan AI Backend
    ```
-   
-   **Important**: Use your actual API keys from your local `.env` file!
 
 5. **Create PostgreSQL Database**
    - In Render Dashboard, click "New +" → "PostgreSQL"
