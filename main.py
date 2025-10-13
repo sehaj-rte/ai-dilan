@@ -49,11 +49,11 @@ async def shutdown_event():
     except Exception as e:
         print(f"❌ Error stopping queue worker: {e}")
 
-# Add CORS middleware
+# Add CORS middleware - Allow all origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,  # Must be False when using wildcard
     allow_methods=["*"],
     allow_headers=["*"],
 )

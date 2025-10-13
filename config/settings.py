@@ -41,8 +41,6 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
 # CORS Settings
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Next.js frontend
-    "http://127.0.0.1:3000",
-    "https://your-frontend-domain.com"
-]
+# Hardcoded to allow all origins for now
+ALLOWED_ORIGINS = ["*"]
+
