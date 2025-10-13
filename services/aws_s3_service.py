@@ -141,6 +141,102 @@ class AWSS3Service:
                 "error": f"Failed to upload image: {str(e)}"
             }
     
+    def upload_file(self, file_content: bytes, filename: str, content_type: str, folder: str = "uploads") -> Dict[str, Any]:
+        """
+        Upload a file to AWS S3
+        
+        Args:
+            file_content: Binary file content
+            filename: Original filename
+            content_type: MIME type of the file
+            folder: Folder to store the file in
+            
+        Returns:
+            Dict containing success status and file URL
+        """
+        try:
+            if not self.s3_client:
+                return {
+                    "success": False,
+                    "error": "AWS S3 client not initialized"
+                }
+            
+            # Generate unique S3 key
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique_id = str(uuid.uuid4())[:8]
+            s3_key = f"{folder}/{timestamp}_{unique_id}_{filename}"
+            
+            # Upload to S3
+            try:
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=content_type,
+                    ACL='public-read'
+                )
+            except ClientError as acl_error:
+                # If ACL fails, try without ACL
+                logger.warning(f"Failed to set public-read ACL, uploading without ACL: {acl_error}")
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=content_type
+                )
+            
+            # Generate public URL
+            file_url = f"https://{self.bucket_name}.s3.{self.region}.amazonaws.com/{s3_key}"
+            
+            logger.info(f"Successfully uploaded file to S3: {s3_key}")
+            
+            return {
+                "success": True,
+                "url": file_url,
+                "s3_key": s3_key,
+                "bucket": self.bucket_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Error uploading file to S3: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Failed to upload file: {str(e)}"
+            }
+    
+    def download_file(self, s3_key: str) -> Optional[bytes]:
+        """
+        Download a file from S3
+        
+        Args:
+            s3_key: The S3 key/path of the file
+            
+        Returns:
+            File content as bytes, or None if failed
+        """
+        try:
+            if not self.s3_client:
+                logger.error("AWS S3 client not initialized")
+                return None
+            
+            logger.info(f"📥 Downloading file from S3: {s3_key}")
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=s3_key
+            )
+            
+            file_content = response['Body'].read()
+            logger.info(f"✅ Successfully downloaded file from S3: {s3_key} ({len(file_content)} bytes)")
+            return file_content
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            logger.error(f"AWS S3 download error: {error_code} - {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Error downloading file from S3: {str(e)}")
+            return None
+    
     def delete_image(self, filename: str) -> Dict[str, Any]:
         """
         Delete an image from S3

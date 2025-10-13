@@ -12,9 +12,12 @@ from controllers.knowledge_base_controller import (
 router = APIRouter()
 
 @router.post("/upload", response_model=dict)
-def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Upload file to knowledge base"""
-    result = upload_file_controller(file, db)
+    # TODO: Get user_id from authentication token
+    user_id = None  # Set to None for now since auth is not implemented
+    
+    result = await upload_file_controller(file, db, user_id)
     
     if not result["success"]:
         raise HTTPException(
@@ -57,9 +60,12 @@ def get_file(file_id: str, db: Session = Depends(get_db)):
     return result
 
 @router.delete("/files/{file_id}", response_model=dict)
-def delete_file(file_id: str, db: Session = Depends(get_db)):
+async def delete_file(file_id: str, db: Session = Depends(get_db)):
     """Delete file from knowledge base"""
-    result = delete_file_controller(file_id, db)
+    # TODO: Get user_id from authentication token
+    user_id = None  # Set to None for now since auth is not implemented
+    
+    result = await delete_file_controller(file_id, db, user_id)
     
     if not result["success"]:
         if "not found" in result["error"].lower():
@@ -87,3 +93,40 @@ def get_stats(db: Session = Depends(get_db)):
         )
     
     return result
+
+@router.get("/documents/selection", response_model=dict)
+def get_documents_for_selection(db: Session = Depends(get_db)):
+    """Get documents in a format suitable for expert creation selection"""
+    # TODO: Get user_id from authentication token
+    user_id = None  # Set to None for now since auth is not implemented
+    
+    result = get_files_controller(db, user_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    # Transform to selection format
+    documents = []
+    for file_data in result["files"]:
+        # Only include successfully processed files
+        if file_data.get("processing_status") == "completed":
+            documents.append({
+                "id": file_data["id"],
+                "name": file_data["name"],
+                "document_type": file_data.get("document_type", "unknown"),
+                "size": file_data["size"],
+                "word_count": file_data.get("word_count"),
+                "description": file_data.get("description"),
+                "tags": file_data.get("tags", []),
+                "created_at": file_data["created_at"],
+                "preview": file_data.get("extracted_text_preview", "")[:200] + "..." if file_data.get("extracted_text_preview") else ""
+            })
+    
+    return {
+        "success": True,
+        "documents": documents,
+        "total": len(documents)
+    }

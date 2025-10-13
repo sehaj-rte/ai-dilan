@@ -71,7 +71,9 @@ class ExpertService:
                 voice_id=expert_data.get("voice_id"),
                 elevenlabs_agent_id=expert_data.get("elevenlabs_agent_id"),
                 avatar_url=expert_data.get("avatar_url"),
-                selected_files=expert_data.get("selected_files", [])
+                pinecone_index_name=expert_data.get("pinecone_index_name"),
+                selected_files=expert_data.get("selected_files", []),
+                knowledge_base_tool_id=expert_data.get("knowledge_base_tool_id")
             )
             
             self.db.add(expert)
@@ -208,7 +210,8 @@ class ExpertService:
             # Update allowed fields
             allowed_fields = [
                 "name", "description", "system_prompt", "voice_id", 
-                "elevenlabs_agent_id", "avatar_url", "selected_files", "is_active"
+                "elevenlabs_agent_id", "avatar_url", "pinecone_index_name",
+                "selected_files", "knowledge_base_tool_id", "is_active"
             ]
             
             for field in allowed_fields:

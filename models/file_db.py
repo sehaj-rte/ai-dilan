@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text
+from sqlalchemy import Column, String, Integer, DateTime, Text, JSON, Boolean, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID
 from config.database import Base
 from datetime import datetime
@@ -14,7 +14,26 @@ class FileDB(Base):
     type = Column(String(100), nullable=False)
     s3_url = Column(Text, nullable=False)
     s3_key = Column(String(500), nullable=False)
-    user_id = Column(UUID(as_uuid=True), nullable=True)  # Optional user association
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    content = Column(LargeBinary, nullable=True)  # Fallback storage when S3 not configured
+    
+    # Enhanced metadata fields
+    description = Column(Text, nullable=True)  # User-provided description
+    tags = Column(JSON, nullable=True)  # Array of tags for categorization
+    document_type = Column(String(50), nullable=True)  # auto-detected: pdf, docx, image, etc.
+    language = Column(String(10), nullable=True)  # detected language
+    word_count = Column(Integer, nullable=True)  # extracted word count
+    page_count = Column(Integer, nullable=True)  # for PDFs
+    
+    # Processing status
+    processing_status = Column(String(20), default='pending')  # pending, processing, completed, failed
+    processing_error = Column(Text, nullable=True)  # error message if processing failed
+    
+    # Content metadata
+    extracted_text_preview = Column(Text, nullable=True)  # First 500 chars for preview
+    has_images = Column(Boolean, default=False)  # contains images
+    has_tables = Column(Boolean, default=False)  # contains tables
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -28,6 +47,40 @@ class FileDB(Base):
             "url": self.s3_url,
             "s3_key": self.s3_key,
             "user_id": str(self.user_id) if self.user_id else None,
+            
+            # Enhanced metadata
+            "description": self.description,
+            "tags": self.tags or [],
+            "document_type": self.document_type,
+            "language": self.language,
+            "word_count": self.word_count,
+            "page_count": self.page_count,
+            
+            # Processing info
+            "processing_status": self.processing_status,
+            "processing_error": self.processing_error,
+            
+            # Content metadata
+            "extracted_text_preview": self.extracted_text_preview,
+            "has_images": self.has_images,
+            "has_tables": self.has_tables,
+            
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
+
+    def to_summary_dict(self):
+        """Lightweight version for document selection"""
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "type": self.type,
+            "document_type": self.document_type,
+            "size": self.size,
+            "word_count": self.word_count,
+            "description": self.description,
+            "tags": self.tags or [],
+            "processing_status": self.processing_status,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "extracted_text_preview": self.extracted_text_preview
         }

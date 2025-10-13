@@ -6,7 +6,7 @@ from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
 from controllers.expert_controller import (
     create_expert, get_expert, list_experts, upload_expert_content, 
     ask_expert, update_expert, delete_expert, create_expert_with_elevenlabs,
-    get_expert_from_db, list_experts_from_db
+    get_expert_from_db, list_experts_from_db, delete_expert_from_db
 )
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ class ExpertCreateRequest(BaseModel):
     voice_id: str
     avatar_base64: str = None  # Base64 encoded image data
     selected_files: List[str] = []
+    user_id: str = "default_user"  # TODO: Get from authentication token
 
 @router.post("/", response_model=dict)
 async def create_new_expert(expert_data: ExpertCreateRequest, db: Session = Depends(get_db)):
@@ -131,8 +132,19 @@ def update_expert_info(expert_id: str, update_data: dict):
     return result
 
 @router.delete("/{expert_id}", response_model=dict)
-def delete_expert_by_id(expert_id: str):
-    """Delete an expert"""
+async def delete_expert_by_id(expert_id: str, db: Session = Depends(get_db)):
+    """Delete an expert and cleanup all associated resources"""
+    result = await delete_expert_from_db(db, expert_id)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result["error"]
+        )
+    return result
+
+@router.delete("/legacy/{expert_id}", response_model=dict)
+def delete_expert_by_id_legacy(expert_id: str):
+    """Delete an expert (legacy method)"""
     result = delete_expert(expert_id)
     if not result["success"]:
         raise HTTPException(

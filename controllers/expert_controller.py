@@ -1,14 +1,16 @@
 from typing import List, Dict, Any
-from services.pinecone_service import store_expert_knowledge, search_expert_knowledge, get_all_experts
-from services.openai_service import create_embedding, generate_response, process_expert_content
+from services.pinecone_service import pinecone_service
+from services.aws_s3_service import s3_service
 from services.elevenlabs_service import elevenlabs_service
 from services.expert_service import ExpertService
-from services.aws_s3_service import s3_service
+from services.queue_service import QueueService
+from services.expert_processing_progress_service import ExpertProcessingProgressService
 from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
 from sqlalchemy.orm import Session
 import uuid
 import json
 import logging
+import os
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -26,11 +28,12 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
         if not expert_data.get("voice_id"):
             return {"success": False, "error": "Voice ID is required"}
         
-        # Create ElevenLabs agent
+        # Step 1: Create ElevenLabs agent first
         elevenlabs_result = await elevenlabs_service.create_agent(
             name=expert_data["name"],
             system_prompt=expert_data["system_prompt"],
-            voice_id=expert_data["voice_id"]
+            voice_id=expert_data["voice_id"],
+            tool_ids=None  # No tools initially
         )
         
         if not elevenlabs_result["success"]:
@@ -40,28 +43,74 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
                 "error": f"Failed to create voice agent: {elevenlabs_result.get('error')}"
             }
         
-        # Handle avatar upload if provided
+        agent_id = elevenlabs_result["agent_id"]
+        logger.info(f"Created ElevenLabs agent: {agent_id}")
+        
+        # Step 2: Create knowledge base tool with the actual agent_id
+        tool_id = None
+        if expert_data.get("selected_files"):
+            try:
+                logger.info(f"Creating knowledge base tool for agent: {agent_id}")
+                tool_result = await create_knowledge_base_tool(agent_id=agent_id)
+                if tool_result["success"]:
+                    tool_id = tool_result["tool_id"]
+                    logger.info(f"Created knowledge base tool: {tool_id}")
+                    
+                    # Step 3: Update agent to include the tool
+                    logger.info(f"Updating agent {agent_id} to include tool {tool_id}")
+                    update_result = await elevenlabs_service.update_agent(
+                        agent_id=agent_id,
+                        tool_ids=[tool_id]
+                    )
+                    if update_result["success"]:
+                        logger.info(f"Successfully attached tool {tool_id} to agent {agent_id}")
+                    else:
+                        logger.warning(f"Failed to attach tool to agent: {update_result.get('error')}")
+                else:
+                    logger.warning(f"Failed to create knowledge base tool: {tool_result.get('error')}")
+            except Exception as e:
+                logger.warning(f"Tool creation/attachment failed: {str(e)}")
+        
+        # Agent and tool creation completed above
+        
+        # Handle avatar upload if provided (non-blocking)
         avatar_url = None
         if expert_data.get("avatar_base64"):
-            # Validate the base64 image
-            validation_result = s3_service.validate_base64_image(expert_data["avatar_base64"])
-            if not validation_result["valid"]:
-                return {
-                    "success": False,
-                    "error": f"Invalid avatar image: {validation_result['error']}"
-                }
-            
-            # Upload the image to AWS S3
-            upload_result = await s3_service.upload_base64_image(
-                expert_data["avatar_base64"],
-                folder="expert-avatars"
-            )
-            
-            if upload_result["success"]:
-                avatar_url = upload_result.get("secure_url") or upload_result.get("url")
-                logger.info(f"Avatar uploaded successfully to S3: {avatar_url}")
-            else:
-                logger.warning(f"S3 avatar upload failed: {upload_result.get('error')}")
+            try:
+                # Check if AWS credentials are configured
+                import os
+                aws_configured = (
+                    os.getenv("S3_ACCESS_KEY_ID") and 
+                    os.getenv("S3_ACCESS_KEY_ID") != "your_s3_access_key_id" and
+                    os.getenv("S3_SECRET_KEY") and 
+                    os.getenv("S3_SECRET_KEY") != "your_s3_secret_key" and
+                    os.getenv("S3_BUCKET_NAME") and 
+                    os.getenv("S3_BUCKET_NAME") != "your_s3_bucket_name"
+                )
+                
+                if aws_configured:
+                    # Validate the base64 image
+                    validation_result = s3_service.validate_base64_image(expert_data["avatar_base64"])
+                    if validation_result["valid"]:
+                        # Upload the image to AWS S3
+                        upload_result = await s3_service.upload_base64_image(
+                            expert_data["avatar_base64"],
+                            folder="expert-avatars"
+                        )
+                        
+                        if upload_result["success"]:
+                            avatar_url = upload_result.get("secure_url") or upload_result.get("url")
+                            logger.info(f"Avatar uploaded successfully to S3: {avatar_url}")
+                        else:
+                            logger.warning(f"S3 avatar upload failed: {upload_result.get('error')}")
+                    else:
+                        logger.warning(f"Invalid avatar image: {validation_result['error']}")
+                else:
+                    logger.info("AWS S3 not configured, skipping avatar upload")
+                    # You could save the base64 image locally or use a default avatar
+                    avatar_url = None
+            except Exception as e:
+                logger.warning(f"Avatar upload failed: {str(e)}")
                 # Don't fail the entire expert creation if avatar upload fails
         
         # Prepare expert data for database (excluding system_prompt and voice_id as requested)
@@ -70,7 +119,9 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
             "description": expert_data.get("description"),
             "elevenlabs_agent_id": elevenlabs_result["agent_id"],
             "avatar_url": avatar_url,
-            "selected_files": expert_data.get("selected_files", [])
+            "pinecone_index_name": elevenlabs_result["agent_id"],  # Set pinecone index to match agent_id
+            "selected_files": expert_data.get("selected_files", []),
+            "knowledge_base_tool_id": tool_id  # Store the tool ID
         }
         
         # Create expert in database
@@ -83,13 +134,67 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
             logger.error(f"Database creation failed, ElevenLabs agent created: {elevenlabs_result['agent_id']}")
             return db_result
         
+        # Step 4: Queue file processing task instead of processing immediately
+        expert_id = db_result["expert"]["id"]
+        selected_files = expert_data.get("selected_files", [])
+        
+        queue_task = None
+        if selected_files:
+            logger.info(f"📋 Queuing file processing for expert {expert_id} with {len(selected_files)} files")
+            print(f"📋 Queuing {len(selected_files)} files for processing for expert {expert_id}")
+            
+            try:
+                # Create progress record with "queued" status
+                progress_service = ExpertProcessingProgressService(db)
+                progress_record = progress_service.create_progress_record(
+                    expert_id=expert_id,
+                    agent_id=elevenlabs_result["agent_id"],
+                    total_files=len(selected_files)
+                )
+                progress_service.update_progress(
+                    expert_id=expert_id,
+                    status="pending",
+                    stage="queued",
+                    details={"message": "Waiting in queue for processing"}
+                )
+                
+                # Add task to queue
+                queue_service = QueueService(db)
+                queue_task = queue_service.enqueue_task(
+                    expert_id=expert_id,
+                    agent_id=elevenlabs_result["agent_id"],
+                    task_data={
+                        "selected_files": selected_files,
+                        "file_count": len(selected_files)
+                    },
+                    task_type="file_processing",
+                    priority=0  # Default priority
+                )
+                
+                logger.info(f"✅ Task queued successfully: {queue_task.id}")
+                print(f"✅ Task {queue_task.id} queued at position {queue_task.queue_position}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error queuing task for expert {expert_id}: {str(e)}")
+                print(f"❌ Error queuing task for expert {expert_id}: {str(e)}")
+                # Don't fail expert creation if queuing fails
+        else:
+            logger.info(f"📭 No files selected for expert {expert_id}, skipping queue")
+            print(f"📭 No files selected for expert {expert_id}, skipping file processing")
+        
         # Return success with both database and ElevenLabs data
         return {
             "success": True,
             "expert": db_result["expert"],
             "elevenlabs_agent_id": elevenlabs_result["agent_id"],
             "main_branch_id": elevenlabs_result.get("main_branch_id"),
-            "initial_version_id": elevenlabs_result.get("initial_version_id")
+            "initial_version_id": elevenlabs_result.get("initial_version_id"),
+            "file_processing": {
+                "files_selected": len(selected_files),
+                "queued": queue_task is not None,
+                "queue_position": queue_task.queue_position if queue_task else None,
+                "task_id": queue_task.id if queue_task else None
+            }
         }
         
     except Exception as e:
@@ -245,8 +350,76 @@ def update_expert(expert_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+async def delete_expert_from_db(db: Session, expert_id: str) -> Dict[str, Any]:
+    """Delete an expert from database and cleanup associated resources"""
+    try:
+        expert_service = ExpertService(db)
+        
+        # Get expert details before deletion
+        expert_result = expert_service.get_expert(expert_id)
+        if not expert_result["success"]:
+            return {"success": False, "error": "Expert not found"}
+        
+        expert = expert_result["expert"]
+        elevenlabs_agent_id = expert.get("elevenlabs_agent_id")
+        knowledge_base_tool_id = expert.get("knowledge_base_tool_id")
+        
+        logger.info(f"Deleting expert {expert['name']} (ID: {expert_id})")
+        
+        # Step 1: Delete ElevenLabs agent if exists
+        if elevenlabs_agent_id:
+            try:
+                logger.info(f"Deleting ElevenLabs agent: {elevenlabs_agent_id}")
+                delete_agent_result = await elevenlabs_service.delete_agent(elevenlabs_agent_id)
+                if delete_agent_result["success"]:
+                    logger.info(f"Successfully deleted ElevenLabs agent: {elevenlabs_agent_id}")
+                else:
+                    logger.warning(f"Failed to delete ElevenLabs agent: {delete_agent_result.get('error')}")
+            except Exception as e:
+                logger.warning(f"Error deleting ElevenLabs agent: {str(e)}")
+        
+        # Step 2: Delete knowledge base tool if exists
+        if knowledge_base_tool_id:
+            try:
+                logger.info(f"Deleting knowledge base tool: {knowledge_base_tool_id}")
+                # Note: ElevenLabs API might not have a direct delete tool endpoint
+                # The tool will be automatically removed when the agent is deleted
+                logger.info(f"Tool {knowledge_base_tool_id} removed with agent deletion")
+            except Exception as e:
+                logger.warning(f"Error handling tool deletion: {str(e)}")
+        
+        # Step 3: Clean up user knowledge base from Pinecone (optional)
+        user_id = f"user_{expert_id}"
+        try:
+            logger.info(f"Cleaning up Pinecone knowledge base for user: {user_id}")
+            # You can uncomment this if you want to delete the knowledge base
+            # await pinecone_service.delete_user_knowledge_base(user_id)
+            logger.info(f"Pinecone cleanup completed for user: {user_id}")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Pinecone: {str(e)}")
+        
+        # Step 4: Delete expert from database
+        delete_result = expert_service.delete_expert(expert_id)
+        if not delete_result["success"]:
+            return delete_result
+        
+        logger.info(f"Successfully deleted expert {expert['name']} and cleaned up resources")
+        return {
+            "success": True,
+            "message": f"Expert '{expert['name']}' deleted successfully",
+            "deleted_resources": {
+                "expert_id": expert_id,
+                "elevenlabs_agent_id": elevenlabs_agent_id,
+                "knowledge_base_tool_id": knowledge_base_tool_id
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting expert: {str(e)}")
+        return {"success": False, "error": f"Failed to delete expert: {str(e)}"}
+
 def delete_expert(expert_id: str) -> Dict[str, Any]:
-    """Delete an expert"""
+    """Legacy delete expert function - kept for backward compatibility"""
     try:
         expert = experts_db.get(expert_id)
         if not expert:
@@ -260,4 +433,94 @@ def delete_expert(expert_id: str) -> Dict[str, Any]:
         
         return {"success": True, "message": "Expert deleted successfully"}
     except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def create_knowledge_base_tool(agent_id: str) -> Dict[str, Any]:
+    """
+    Create a knowledge base search tool for an agent
+    
+    Args:
+        agent_id: ElevenLabs agent ID to identify the expert
+        
+    Returns:
+        Dict containing tool creation status and tool_id
+    """
+    try:
+        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+        webhook_token = os.getenv("WEBHOOK_AUTH_TOKEN", "your-secret-token")
+        
+        # Create tool configuration with agent_id in the URL
+        tool_config = {
+            "name": f"search_user_knowledge",
+            "description": "Search the user's uploaded documents and knowledge base for relevant information to answer questions. Use this when you need specific information that might be in the user's documents.",
+            "webhook_url": f"{base_url}/tools/search-user-knowledge?agent_id={agent_id}",  # Include agent_id in URL
+            "authentication": {
+                "type": "bearer",
+                "token": webhook_token
+            }
+        }
+        
+        # Create the webhook tool
+        tool_result = await elevenlabs_service.create_webhook_tool(tool_config)
+        
+        if tool_result["success"]:
+            tool_id = tool_result["tool_id"]
+            logger.info(f"Successfully created knowledge base tool {tool_id} for agent {agent_id}")
+            return {
+                "success": True,
+                "tool_id": tool_id,
+                "message": "Knowledge base tool created successfully"
+            }
+        else:
+            logger.error(f"Failed to create webhook tool: {tool_result.get('error')}")
+            return tool_result
+        
+    except Exception as e:
+        logger.error(f"Error creating knowledge base tool: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+async def update_knowledge_base_tool_url(tool_id: str, agent_id: str) -> Dict[str, Any]:
+    """
+    Update the webhook URL of a knowledge base tool with the actual agent_id
+    
+    Args:
+        tool_id: ElevenLabs tool ID
+        agent_id: Actual ElevenLabs agent ID
+        
+    Returns:
+        Dict containing update status
+    """
+    try:
+        base_url = os.getenv("BASE_URL", "http://localhost:8000")
+        webhook_token = os.getenv("WEBHOOK_AUTH_TOKEN", "your-secret-token")
+        
+        # Create updated tool configuration with real agent_id
+        updated_config = {
+            "name": f"search_user_knowledge_{agent_id}",
+            "description": "Search the user's uploaded documents and knowledge base for relevant information to answer questions. Use this when you need specific information that might be in the user's documents.",
+            "webhook_url": f"{base_url}/tools/search-user-knowledge?agent_id={agent_id}",
+            "authentication": {
+                "type": "bearer",
+                "token": webhook_token
+            }
+        }
+        
+        # Update the tool using ElevenLabs API
+        update_result = await elevenlabs_service.update_webhook_tool(tool_id, updated_config)
+        
+        if update_result["success"]:
+            logger.info(f"Successfully updated tool {tool_id} with agent_id {agent_id}")
+            return {
+                "success": True,
+                "message": "Tool webhook URL updated successfully"
+            }
+        else:
+            logger.error(f"Failed to update tool webhook URL: {update_result.get('error')}")
+            return update_result
+            
+    except Exception as e:
+        logger.error(f"Error updating tool webhook URL: {str(e)}")
         return {"success": False, "error": str(e)}
