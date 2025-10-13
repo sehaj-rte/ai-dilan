@@ -10,3 +10,4 @@ pip install -r requirements.txt
 python init_db.py
 python add_progress_table.py
 python add_queue_table.py
+python migrate_files_table.py
