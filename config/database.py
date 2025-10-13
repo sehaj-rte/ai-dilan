@@ -10,8 +10,20 @@ load_dotenv()
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://username:password@localhost:5432/dilan_ai_db")
 
-# Create SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
+# Remove channel_binding parameter if present (causes issues with some PostgreSQL versions)
+if "channel_binding=require" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("&channel_binding=require", "").replace("channel_binding=require&", "").replace("?channel_binding=require", "")
+
+# Create SQLAlchemy engine with connection pool settings
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,  # Verify connections before using them
+    pool_recycle=3600,   # Recycle connections after 1 hour
+    connect_args={
+        "connect_timeout": 10,
+        "options": "-c timezone=utc"
+    }
+)
 
 # Create SessionLocal class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
