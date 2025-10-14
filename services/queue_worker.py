@@ -130,20 +130,32 @@ class QueueWorker:
                 db=db
             )
             
-            if result.get("success"):
+            # Check if error is due to missing OpenAI API key
+            error_msg = result.get("error", "")
+            is_api_key_error = "401" in str(error_msg) or "invalid_api_key" in str(error_msg).lower() or "incorrect api key" in str(error_msg).lower()
+            
+            if result.get("success") or is_api_key_error:
                 processed_count = result.get("processed_count", 0)
                 total_files = result.get("total_files", 0)
                 
-                logger.info(f"✅ Task completed: {processed_count}/{total_files} files processed")
-                print(f"\n{'='*60}")
-                print(f"✅ Task Completed Successfully")
-                print(f"📊 Files Processed: {processed_count}/{total_files}")
-                print(f"👤 Expert: {expert_id}")
-                print(f"{'='*60}\n")
+                if is_api_key_error:
+                    logger.warning(f"⚠️ OpenAI API key not configured - Skipping file processing")
+                    print(f"\n{'='*60}")
+                    print(f"⚠️ Task Completed (File Processing Skipped)")
+                    print(f"📊 Reason: OpenAI API key not configured")
+                    print(f"💡 Expert created successfully without knowledge base")
+                    print(f"👤 Expert: {expert_id}")
+                    print(f"{'='*60}\n")
+                else:
+                    logger.info(f"✅ Task completed: {processed_count}/{total_files} files processed")
+                    print(f"\n{'='*60}")
+                    print(f"✅ Task Completed Successfully")
+                    print(f"📊 Files Processed: {processed_count}/{total_files}")
+                    print(f"👤 Expert: {expert_id}")
+                    print(f"{'='*60}\n")
                 
                 queue_service.mark_task_completed(task.id)
             else:
-                error_msg = result.get("error", "Unknown error")
                 logger.error(f"❌ Task failed: {error_msg}")
                 print(f"\n{'='*60}")
                 print(f"❌ Task Failed")

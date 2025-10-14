@@ -22,16 +22,16 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
         if not expert_data.get("name"):
             return {"success": False, "error": "Expert name is required"}
         
-        if not expert_data.get("system_prompt"):
-            return {"success": False, "error": "System prompt is required"}
-        
         if not expert_data.get("voice_id"):
             return {"success": False, "error": "Voice ID is required"}
+        
+        # Use default system prompt if not provided
+        system_prompt = expert_data.get("system_prompt") or "You are a helpful AI assistant."
         
         # Step 1: Create ElevenLabs agent first
         elevenlabs_result = await elevenlabs_service.create_agent(
             name=expert_data["name"],
-            system_prompt=expert_data["system_prompt"],
+            system_prompt=system_prompt,
             voice_id=expert_data["voice_id"],
             first_message=expert_data.get("first_message"),  # Pass first_message if provided
             tool_ids=None  # No tools initially
@@ -116,6 +116,7 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
         
         # Prepare expert data for database (excluding system_prompt and voice_id as requested)
         db_expert_data = {
+            "user_id": expert_data.get("user_id"),  # Pass user_id from authenticated user
             "name": expert_data["name"],
             "description": expert_data.get("description"),
             "elevenlabs_agent_id": elevenlabs_result["agent_id"],
@@ -135,53 +136,18 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
             logger.error(f"Database creation failed, ElevenLabs agent created: {elevenlabs_result['agent_id']}")
             return db_result
         
-        # Step 4: Queue file processing task instead of processing immediately
+        # Step 4: Skip file processing for now (OpenAI API key not configured)
         expert_id = db_result["expert"]["id"]
         selected_files = expert_data.get("selected_files", [])
         
         queue_task = None
         if selected_files:
-            logger.info(f"📋 Queuing file processing for expert {expert_id} with {len(selected_files)} files")
-            print(f"📋 Queuing {len(selected_files)} files for processing for expert {expert_id}")
-            
-            try:
-                # Create progress record with "queued" status
-                progress_service = ExpertProcessingProgressService(db)
-                progress_record = progress_service.create_progress_record(
-                    expert_id=expert_id,
-                    agent_id=elevenlabs_result["agent_id"],
-                    total_files=len(selected_files)
-                )
-                progress_service.update_progress(
-                    expert_id=expert_id,
-                    status="pending",
-                    stage="queued",
-                    details={"message": "Waiting in queue for processing"}
-                )
-                
-                # Add task to queue
-                queue_service = QueueService(db)
-                queue_task = queue_service.enqueue_task(
-                    expert_id=expert_id,
-                    agent_id=elevenlabs_result["agent_id"],
-                    task_data={
-                        "selected_files": selected_files,
-                        "file_count": len(selected_files)
-                    },
-                    task_type="file_processing",
-                    priority=0  # Default priority
-                )
-                
-                logger.info(f"✅ Task queued successfully: {queue_task.id}")
-                print(f"✅ Task {queue_task.id} queued at position {queue_task.queue_position}")
-                
-            except Exception as e:
-                logger.error(f"❌ Error queuing task for expert {expert_id}: {str(e)}")
-                print(f"❌ Error queuing task for expert {expert_id}: {str(e)}")
-                # Don't fail expert creation if queuing fails
+            logger.info(f"📭 File processing skipped for expert {expert_id} ({len(selected_files)} files)")
+            print(f"📭 File processing skipped - OpenAI API key not configured")
+            # TODO: Enable file processing when OpenAI API key is configured
         else:
-            logger.info(f"📭 No files selected for expert {expert_id}, skipping queue")
-            print(f"📭 No files selected for expert {expert_id}, skipping file processing")
+            logger.info(f"📭 No files selected for expert {expert_id}")
+            print(f"📭 No files selected for expert {expert_id}")
         
         # Return success with both database and ElevenLabs data
         return {
@@ -249,9 +215,10 @@ def list_experts_from_db(db: Session, user_id: str = None) -> Dict[str, Any]:
     """List all experts from database for a specific user"""
     try:
         expert_service = ExpertService(db)
-        experts = expert_service.list_experts(user_id=user_id)
+        result = expert_service.list_experts(user_id=user_id)
         
-        return {"success": True, "experts": experts}
+        # Service already returns {"success": True, "experts": [...]}
+        return result
     except Exception as e:
         logger.error(f"Error listing experts: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -363,16 +330,16 @@ async def delete_expert_from_db(db: Session, expert_id: str, user_id: str = None
     """Delete an expert from database and cleanup associated resources"""
     try:
         expert_service = ExpertService(db)
-        expert = expert_service.get_expert(expert_id)
-        
-        # Check if expert belongs to user
-        if expert and user_id and expert.user_id != user_id:
-            return {"success": False, "error": "Expert not found or access denied"}
         
         # Get expert details before deletion
         expert_result = expert_service.get_expert(expert_id)
         if not expert_result["success"]:
             return {"success": False, "error": "Expert not found"}
+        
+        # Check if expert belongs to user
+        expert_data = expert_result["expert"]
+        if user_id and expert_data.get("user_id") != user_id:
+            return {"success": False, "error": "Expert not found or access denied"}
         
         expert = expert_result["expert"]
         elevenlabs_agent_id = expert.get("elevenlabs_agent_id")

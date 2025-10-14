@@ -55,7 +55,7 @@ def create_new_expert_legacy(expert_data: ExpertCreate):
         )
     return result
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=dict)
 def get_all_experts(
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
@@ -67,7 +67,11 @@ def get_all_experts(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=result["error"]
         )
-    return result
+    # Return the experts list directly, not the whole result dict
+    return {
+        "success": True,
+        "experts": result.get("experts", [])
+    }
 
 @router.get("/legacy", response_model=dict)
 def get_all_experts_legacy():

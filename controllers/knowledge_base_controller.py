@@ -28,15 +28,15 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder
             logger.error("No filename provided")
             return {"success": False, "error": "No file provided"}
         
-        # Check file size (limit to 50MB)
-        max_size = 50 * 1024 * 1024  # 50MB
+        # Check file size (limit to 15MB)
+        max_size = 15 * 1024 * 1024  # 15MB
         file_content = file.file.read()
         
         logger.info(f"File size: {len(file_content)} bytes")
         
         if len(file_content) > max_size:
             logger.error(f"File size {len(file_content)} exceeds limit {max_size}")
-            return {"success": False, "error": "File size exceeds 50MB limit"}
+            return {"success": False, "error": "File size exceeds 15MB limit"}
         
         if len(file_content) == 0:
             logger.error("File is empty")

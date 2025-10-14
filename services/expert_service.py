@@ -77,6 +77,7 @@ class ExpertService:
                 selected_files = []
             
             expert = ExpertDB(
+                user_id=expert_data.get("user_id"),
                 name=expert_data.get("name"),
                 description=expert_data.get("description"),
                 system_prompt=expert_data.get("system_prompt"),

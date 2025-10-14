@@ -1,0 +1,20 @@
+YouTube Cookies Setup (Required for Video Transcription)
+========================================================
+
+YouTube now requires authentication. To fix this:
+
+1. Install browser extension "Get cookies.txt LOCALLY"
+   Chrome: https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
+
+2. Go to youtube.com and make sure you're logged in
+
+3. Click the extension icon and export cookies.txt
+
+4. Upload the cookies.txt file to your server
+
+5. Add to .env file:
+   YOUTUBE_COOKIES_FILE=/path/to/youtube_cookies.txt
+
+6. Restart the backend server
+
+Note: Cookies expire after 6-12 months. Re-export if transcription stops working.

@@ -7,6 +7,7 @@ class ExpertDB(Base):
     __tablename__ = "experts"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(255), nullable=False, index=True)  # User who owns this expert
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     system_prompt = Column(Text, nullable=True)
@@ -26,6 +27,7 @@ class ExpertDB(Base):
     def to_dict(self):
         return {
             "id": self.id,
+            "user_id": self.user_id,
             "name": self.name,
             "description": self.description,
             "system_prompt": self.system_prompt,

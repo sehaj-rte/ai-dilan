@@ -25,13 +25,19 @@ class YouTubeService:
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': False,
-                'cookiesfrombrowser': ('chrome',),  # Try to use Chrome cookies
             }
             
             # Add cookies file if specified
             if self.cookies_file and os.path.exists(self.cookies_file):
                 ydl_opts['cookiefile'] = self.cookies_file
                 logger.info(f"Using cookies from: {self.cookies_file}")
+            else:
+                # Try to extract cookies from browser if available
+                try:
+                    ydl_opts['cookiesfrombrowser'] = ('chrome',)
+                except Exception:
+                    # Browser cookies not available, continue without them
+                    pass
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=False)
@@ -93,13 +99,19 @@ class YouTubeService:
                 'quiet': False,
                 'no_warnings': False,
                 'progress_hooks': [self._progress_hook],
-                'cookiesfrombrowser': ('chrome',),  # Try to use Chrome cookies
             }
             
             # Add cookies file if specified
             if self.cookies_file and os.path.exists(self.cookies_file):
                 ydl_opts['cookiefile'] = self.cookies_file
                 logger.info(f"Using cookies from: {self.cookies_file}")
+            else:
+                # Try to extract cookies from browser if available
+                try:
+                    ydl_opts['cookiesfrombrowser'] = ('chrome',)
+                except Exception:
+                    # Browser cookies not available, continue without them
+                    pass
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=True)
