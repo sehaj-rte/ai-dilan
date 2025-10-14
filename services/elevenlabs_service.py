@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 class ElevenLabsService:
     def __init__(self):
         # Hardcoded API key for now
-        self.api_key = "sk_7e6d4210c5184763b1623ec5558c557cc182ab91ca8960a2"
+        self.api_key = "sk_080d5c92d8712bc210e293fec768eb3997309b3052a06574"
         self.base_url = "https://api.elevenlabs.io/v1"
         
         if not self.api_key:
@@ -18,7 +18,7 @@ class ElevenLabsService:
             "Content-Type": "application/json"
         }
     
-    async def create_agent(self, name: str, system_prompt: str, voice_id: str, tool_ids: list = None) -> Dict[str, Any]:
+    async def create_agent(self, name: str, system_prompt: str, voice_id: str, first_message: str = None, tool_ids: list = None) -> Dict[str, Any]:
         """
         Create a new ElevenLabs conversational agent with optional tools
         
@@ -26,6 +26,7 @@ class ElevenLabsService:
             name: Name of the agent
             system_prompt: The system prompt for the agent
             voice_id: ElevenLabs voice ID to use
+            first_message: The initial greeting message the agent will send
             tool_ids: List of tool IDs to attach to the agent
             
         Returns:
@@ -55,6 +56,14 @@ class ElevenLabsService:
                 },
                 "name": name
             }
+            
+            # Add first_message if provided
+            if first_message:
+                payload["conversation_config"]["agent"]["first_message"] = first_message
+                logger.info(f"Adding first message to agent: {first_message[:50]}...")
+            
+            # Debug: Log the complete payload structure
+            logger.info(f"ElevenLabs create_agent payload: {payload}")
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=payload, headers=self.headers)
@@ -119,6 +128,7 @@ class ElevenLabsService:
     async def update_agent(self, agent_id: str, name: Optional[str] = None, 
                           system_prompt: Optional[str] = None, 
                           voice_id: Optional[str] = None,
+                          first_message: Optional[str] = None,
                           tool_ids: Optional[list] = None) -> Dict[str, Any]:
         """
         Update an existing ElevenLabs agent
@@ -128,6 +138,7 @@ class ElevenLabsService:
             name: New name for the agent (optional)
             system_prompt: New system prompt (optional)
             voice_id: New voice ID (optional)
+            first_message: New first message (optional)
             tool_ids: List of tool IDs to attach (optional)
             
         Returns:
@@ -140,20 +151,26 @@ class ElevenLabsService:
             if name is not None:
                 payload["name"] = name
                 
-            if system_prompt is not None or voice_id is not None or tool_ids is not None:
+            if system_prompt is not None or voice_id is not None or first_message is not None or tool_ids is not None:
                 payload["conversation_config"] = {}
                 
-                if system_prompt is not None or tool_ids is not None:
-                    prompt_config = {}
-                    if system_prompt is not None:
-                        prompt_config["prompt"] = system_prompt
-                    if tool_ids is not None:
-                        prompt_config["tool_ids"] = tool_ids
-                        logger.info(f"Adding {len(tool_ids)} tools to agent: {tool_ids}")
+                if system_prompt is not None or first_message is not None or tool_ids is not None:
+                    agent_config = {}
                     
-                    payload["conversation_config"]["agent"] = {
-                        "prompt": prompt_config
-                    }
+                    if system_prompt is not None or tool_ids is not None:
+                        prompt_config = {}
+                        if system_prompt is not None:
+                            prompt_config["prompt"] = system_prompt
+                        if tool_ids is not None:
+                            prompt_config["tool_ids"] = tool_ids
+                            logger.info(f"Adding {len(tool_ids)} tools to agent: {tool_ids}")
+                        agent_config["prompt"] = prompt_config
+                    
+                    if first_message is not None:
+                        agent_config["first_message"] = first_message
+                        logger.info(f"Updating first message: {first_message[:50]}...")
+                    
+                    payload["conversation_config"]["agent"] = agent_config
                     
                 if voice_id is not None:
                     payload["conversation_config"]["tts"] = {

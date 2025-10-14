@@ -1,10 +1,10 @@
 from typing import Dict, Any
 from fastapi import UploadFile
 from services.openai_service import transcribe_audio, generate_speech
+from services.elevenlabs_service import elevenlabs_service
 import base64
 import io
-import requests
-from config.settings import ELEVENLABS_API_KEY
+import asyncio
 
 def transcribe_voice(audio_file: UploadFile) -> Dict[str, Any]:
     """Transcribe voice to text"""
@@ -87,30 +87,20 @@ def get_voice_info(voice_id: str) -> Dict[str, Any]:
 def get_elevenlabs_voices() -> Dict[str, Any]:
     """Get list of ElevenLabs voices"""
     try:
-        print(f"DEBUG: ELEVENLABS_API_KEY configured: {bool(ELEVENLABS_API_KEY)}")
+        # Use the elevenlabs_service which has the API key configured
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(elevenlabs_service.get_voices())
+        loop.close()
         
-        if not ELEVENLABS_API_KEY:
-            return {"success": False, "error": "ElevenLabs API key not configured"}
+        if not result["success"]:
+            print(f"DEBUG: ElevenLabs service error: {result.get('error')}")
+            return result
         
-        url = "https://api.elevenlabs.io/v2/voices?page_size=100"
-        headers = {
-            "xi-api-key": ELEVENLABS_API_KEY,
-            "Content-Type": "application/json"
-        }
+        voices = result.get("voices", [])
+        print(f"DEBUG: Found {len(voices)} voices from ElevenLabs service")
         
-        print(f"DEBUG: Making request to {url}")
-        response = requests.get(url, headers=headers)
-        print(f"DEBUG: Response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"DEBUG: Response text: {response.text}")
-            return {"success": False, "error": f"ElevenLabs API error: {response.status_code} - {response.text}"}
-        
-        data = response.json()
-        voices = data.get("voices", [])
-        print(f"DEBUG: Found {len(voices)} voices")
-        
-        # Format voices for frontend
+        # Format voices for frontend (ElevenLabs API format)
         formatted_voices = []
         for voice in voices:
             formatted_voices.append({

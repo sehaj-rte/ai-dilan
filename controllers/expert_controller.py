@@ -33,6 +33,7 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
             name=expert_data["name"],
             system_prompt=expert_data["system_prompt"],
             voice_id=expert_data["voice_id"],
+            first_message=expert_data.get("first_message"),  # Pass first_message if provided
             tool_ids=None  # No tools initially
         )
         
