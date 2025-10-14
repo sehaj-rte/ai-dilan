@@ -13,6 +13,7 @@ class YouTubeService:
     def __init__(self):
         self.max_chunk_size_mb = 20  # Max chunk size for ElevenLabs (20MB to be safe)
         self.chunk_duration_minutes = 10  # Split audio into 10-minute chunks
+        self.cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', None)  # Optional cookies file path
     
     def get_video_info(self, youtube_url: str) -> Dict[str, Any]:
         """Get video metadata without downloading"""
@@ -24,7 +25,13 @@ class YouTubeService:
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': False,
+                'cookiesfrombrowser': ('chrome',),  # Try to use Chrome cookies
             }
+            
+            # Add cookies file if specified
+            if self.cookies_file and os.path.exists(self.cookies_file):
+                ydl_opts['cookiefile'] = self.cookies_file
+                logger.info(f"Using cookies from: {self.cookies_file}")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=False)
@@ -86,7 +93,13 @@ class YouTubeService:
                 'quiet': False,
                 'no_warnings': False,
                 'progress_hooks': [self._progress_hook],
+                'cookiesfrombrowser': ('chrome',),  # Try to use Chrome cookies
             }
+            
+            # Add cookies file if specified
+            if self.cookies_file and os.path.exists(self.cookies_file):
+                ydl_opts['cookiefile'] = self.cookies_file
+                logger.info(f"Using cookies from: {self.cookies_file}")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=True)
