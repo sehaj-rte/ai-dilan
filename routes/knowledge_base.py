@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends, Form
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from config.database import get_db
+from dependencies.auth import get_current_user_required
 from controllers.knowledge_base_controller import (
     upload_file as upload_file_controller,
     get_files as get_files_controller,
@@ -9,15 +11,32 @@ from controllers.knowledge_base_controller import (
     get_file_stats as get_file_stats_controller
 )
 
+class YouTubeTranscribeRequest(BaseModel):
+    youtube_url: str
+    folder: str = "Uncategorized"
+    custom_name: str = None
+
+class RenameFolderRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+class MoveFileRequest(BaseModel):
+    folder_name: str
+
 router = APIRouter()
 
 @router.post("/upload", response_model=dict)
-async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_file(
+    file: UploadFile = File(...), 
+    folder: str = Form("Uncategorized"),
+    custom_name: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
     """Upload file to knowledge base"""
-    # TODO: Get user_id from authentication token
-    user_id = None  # Set to None for now since auth is not implemented
+    user_id = current_user_id
     
-    result = await upload_file_controller(file, db, user_id)
+    result = await upload_file_controller(file, db, user_id, folder, custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -28,9 +47,12 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
     return result
 
 @router.get("/files", response_model=dict)
-def get_files(db: Session = Depends(get_db)):
+def get_files(
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
     """Get all uploaded files"""
-    result = get_files_controller(db)
+    result = get_files_controller(db, current_user_id)
     
     if not result["success"]:
         raise HTTPException(
@@ -60,10 +82,13 @@ def get_file(file_id: str, db: Session = Depends(get_db)):
     return result
 
 @router.delete("/files/{file_id}", response_model=dict)
-async def delete_file(file_id: str, db: Session = Depends(get_db)):
+async def delete_file(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
     """Delete file from knowledge base"""
-    # TODO: Get user_id from authentication token
-    user_id = None  # Set to None for now since auth is not implemented
+    user_id = current_user_id
     
     result = await delete_file_controller(file_id, db, user_id)
     
@@ -177,3 +202,152 @@ def get_document_details(document_id: str, db: Session = Depends(get_db)):
         "success": True,
         "document": document_details
     }
+
+@router.post("/transcribe-audio", response_model=dict)
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    folder: str = Form("Uncategorized"),
+    custom_name: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Transcribe audio using ElevenLabs Speech-to-Text API and save to knowledge base"""
+    from controllers.knowledge_base_controller import transcribe_and_save_audio
+    
+    user_id = current_user_id
+    
+    result = await transcribe_and_save_audio(file, db, user_id, folder, custom_name)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.post("/transcribe-youtube", response_model=dict)
+async def transcribe_youtube(
+    request: YouTubeTranscribeRequest,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Download audio from YouTube video and transcribe using ElevenLabs"""
+    from controllers.knowledge_base_controller import transcribe_youtube_video
+    
+    user_id = current_user_id
+    
+    result = await transcribe_youtube_video(request.youtube_url, db, user_id, request.folder, request.custom_name)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+# Folder Management Endpoints
+
+@router.get("/folders", response_model=dict)
+def get_folders(
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Get all folders with file counts"""
+    from services.file_service import FileService
+    
+    user_id = current_user_id
+    
+    file_service = FileService(db)
+    result = file_service.get_folders(user_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.post("/folders", response_model=dict)
+def create_folder(
+    folder_name: str,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Create a new folder"""
+    from services.file_service import FileService
+    
+    user_id = current_user_id
+    
+    file_service = FileService(db)
+    result = file_service.create_folder(folder_name, user_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.put("/folders/rename", response_model=dict)
+def rename_folder(
+    request: RenameFolderRequest,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Rename a folder"""
+    from services.file_service import FileService
+    
+    user_id = current_user_id
+    
+    file_service = FileService(db)
+    result = file_service.rename_folder(request.old_name, request.new_name, user_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.delete("/folders/{folder_name}", response_model=dict)
+def delete_folder(
+    folder_name: str,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Delete a folder (moves all files to Uncategorized)"""
+    from services.file_service import FileService
+    
+    user_id = current_user_id
+    
+    file_service = FileService(db)
+    result = file_service.delete_folder(folder_name, user_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.put("/files/{file_id}/move", response_model=dict)
+def move_file(file_id: str, request: MoveFileRequest, db: Session = Depends(get_db)):
+    """Move a file to a different folder"""
+    from services.file_service import FileService
+    
+    file_service = FileService(db)
+    result = file_service.move_file_to_folder(file_id, request.folder_name)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result

@@ -25,3 +25,6 @@ Pillow>=10.3.0
 pytesseract==0.3.10
 SpeechRecognition==3.10.0
 pydub==0.25.1
+
+# YouTube audio extraction
+yt-dlp>=2024.3.10

@@ -1,6 +1,8 @@
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from models.file_db import FileDB
+from models.folder_db import FolderDB
 # from services.s3_service import s3_service
 import uuid
 import logging
@@ -11,7 +13,7 @@ class FileService:
     def __init__(self, db: Session):
         self.db = db
     
-    def upload_file(self, file_content: bytes, file_name: str, content_type: str, file_size: int, user_id: Optional[str] = None, extraction_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def upload_file(self, file_content: bytes, file_name: str, content_type: str, file_size: int, user_id: Optional[str] = None, extraction_result: Optional[Dict[str, Any]] = None, folder: str = "Uncategorized") -> Dict[str, Any]:
         """Upload file to S3 and save metadata to database"""
         try:
             print(f"\U0001f4c1 File Service: Starting upload for {file_name}, size: {file_size}")
@@ -49,9 +51,14 @@ class FileService:
                     print(f"\U0001f6ab File Service: Invalid user_id format: {user_id}")
                     return {"success": False, "error": f"Invalid user_id format: {user_id}"}
             
+            # Determine processing status based on extraction result
+            # If extraction was successful, mark as completed
+            # Otherwise, mark as pending (for files that need processing)
+            processing_status = 'completed' if (extraction_result and extraction_result.get("success")) else 'pending'
+            
             # Save to database (with content if S3 failed)
-            print(f"\U0001f4be File Service: Creating database record for {file_name}")
-            logger.info("FileService: Creating database record")
+            print(f"\U0001f4be File Service: Creating database record for {file_name} in folder: {folder}")
+            logger.info(f"FileService: Creating database record with status: {processing_status}, folder: {folder}")
             file_record = FileDB(
                 name=file_name,
                 original_name=file_name,
@@ -63,6 +70,7 @@ class FileService:
                 content=file_content if store_content_in_db else None,  # Store content as fallback
                 
                 # Enhanced metadata
+                folder=folder,  # Set folder/category
                 document_type=metadata.get("document_type"),
                 language=metadata.get("language"),
                 word_count=extraction_result.get("word_count") if extraction_result else None,
@@ -71,7 +79,7 @@ class FileService:
                 has_tables=metadata.get("has_tables", False),
                 extracted_text=extraction_result.get("text") if extraction_result and extraction_result.get("success") else None,
                 extracted_text_preview=metadata.get("extracted_text_preview"),
-                processing_status='pending'  # Set to pending since processing is disabled
+                processing_status=processing_status  # Set based on extraction success
             )
             
             logger.info("FileService: Adding record to database")
@@ -211,4 +219,178 @@ class FileService:
             }
             
         except Exception as e:
+            return {"success": False, "error": f"Database error: {str(e)}"}
+    
+    def get_folders(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get all folders with file counts"""
+        try:
+            # Get all folders from folders table
+            folders_query = self.db.query(FolderDB)
+            if user_id:
+                folders_query = folders_query.filter(FolderDB.user_id == uuid.UUID(user_id))
+            
+            all_folders = folders_query.all()
+            
+            # Get file counts for each folder
+            files_query = self.db.query(FileDB.folder, func.count(FileDB.id).label('count'))
+            if user_id:
+                files_query = files_query.filter(FileDB.user_id == uuid.UUID(user_id))
+            
+            file_counts = dict(files_query.group_by(FileDB.folder).all())
+            
+            # Combine folders with their counts
+            folder_list = []
+            for folder in all_folders:
+                folder_list.append({
+                    "name": folder.name,
+                    "count": file_counts.get(folder.name, 0)
+                })
+            
+            # Sort: Uncategorized last, others alphabetically
+            folder_list.sort(key=lambda x: (x["name"] == "Uncategorized", x["name"]))
+            
+            return {
+                "success": True,
+                "folders": folder_list,
+                "total": len(folder_list)
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": f"Database error: {str(e)}"}
+    
+    def create_folder(self, folder_name: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new folder"""
+        try:
+            if not folder_name or folder_name.strip() == "":
+                return {"success": False, "error": "Folder name cannot be empty"}
+            
+            trimmed_name = folder_name.strip()
+            
+            # Check if folder already exists
+            query = self.db.query(FolderDB).filter(FolderDB.name == trimmed_name)
+            if user_id:
+                query = query.filter(FolderDB.user_id == uuid.UUID(user_id))
+            else:
+                query = query.filter(FolderDB.user_id.is_(None))
+            
+            existing_folder = query.first()
+            if existing_folder:
+                return {"success": False, "error": f"Folder '{trimmed_name}' already exists"}
+            
+            # Create new folder
+            user_uuid = None
+            if user_id:
+                try:
+                    user_uuid = uuid.UUID(user_id)
+                except ValueError:
+                    return {"success": False, "error": "Invalid user_id format"}
+            
+            new_folder = FolderDB(
+                name=trimmed_name,
+                user_id=user_uuid
+            )
+            
+            self.db.add(new_folder)
+            self.db.commit()
+            self.db.refresh(new_folder)
+            
+            return {
+                "success": True,
+                "message": f"Folder '{trimmed_name}' created successfully",
+                "folder": new_folder.to_dict()
+            }
+            
+        except Exception as e:
+            self.db.rollback()
+            return {"success": False, "error": f"Database error: {str(e)}"}
+    
+    def rename_folder(self, old_name: str, new_name: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Rename a folder (updates all files in that folder)"""
+        try:
+            if old_name == "Uncategorized":
+                return {"success": False, "error": "Cannot rename Uncategorized folder"}
+            
+            if not new_name or new_name.strip() == "":
+                return {"success": False, "error": "New folder name cannot be empty"}
+            
+            query = self.db.query(FileDB).filter(FileDB.folder == old_name)
+            
+            if user_id:
+                query = query.filter(FileDB.user_id == uuid.UUID(user_id))
+            
+            files = query.all()
+            
+            if not files:
+                return {"success": False, "error": "Folder not found"}
+            
+            for file in files:
+                file.folder = new_name.strip()
+            
+            self.db.commit()
+            
+            return {
+                "success": True,
+                "message": f"Renamed folder '{old_name}' to '{new_name}'",
+                "files_updated": len(files)
+            }
+            
+        except Exception as e:
+            self.db.rollback()
+            return {"success": False, "error": f"Database error: {str(e)}"}
+    
+    def delete_folder(self, folder_name: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Delete a folder (moves all files to Uncategorized)"""
+        try:
+            if folder_name == "Uncategorized":
+                return {"success": False, "error": "Cannot delete Uncategorized folder"}
+            
+            query = self.db.query(FileDB).filter(FileDB.folder == folder_name)
+            
+            if user_id:
+                query = query.filter(FileDB.user_id == uuid.UUID(user_id))
+            
+            files = query.all()
+            
+            if not files:
+                return {"success": False, "error": "Folder not found"}
+            
+            for file in files:
+                file.folder = "Uncategorized"
+            
+            self.db.commit()
+            
+            return {
+                "success": True,
+                "message": f"Deleted folder '{folder_name}', moved {len(files)} files to Uncategorized",
+                "files_moved": len(files)
+            }
+            
+        except Exception as e:
+            self.db.rollback()
+            return {"success": False, "error": f"Database error: {str(e)}"}
+    
+    def move_file_to_folder(self, file_id: str, folder_name: str) -> Dict[str, Any]:
+        """Move a file to a different folder"""
+        try:
+            file_record = self.db.query(FileDB).filter(FileDB.id == uuid.UUID(file_id)).first()
+            
+            if not file_record:
+                return {"success": False, "error": "File not found"}
+            
+            if not folder_name or folder_name.strip() == "":
+                folder_name = "Uncategorized"
+            
+            old_folder = file_record.folder
+            file_record.folder = folder_name.strip()
+            
+            self.db.commit()
+            
+            return {
+                "success": True,
+                "message": f"Moved file from '{old_folder}' to '{folder_name}'",
+                "file": file_record.to_dict()
+            }
+            
+        except Exception as e:
+            self.db.rollback()
             return {"success": False, "error": f"Database error: {str(e)}"}

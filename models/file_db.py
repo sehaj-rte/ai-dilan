@@ -20,6 +20,7 @@ class FileDB(Base):
     # Enhanced metadata fields
     description = Column(Text, nullable=True)  # User-provided description
     tags = Column(JSON, nullable=True)  # Array of tags for categorization
+    folder = Column(String(255), default="Uncategorized", nullable=False)  # Folder/category name
     document_type = Column(String(50), nullable=True)  # auto-detected: pdf, docx, image, etc.
     language = Column(String(10), nullable=True)  # detected language
     word_count = Column(Integer, nullable=True)  # extracted word count
@@ -52,6 +53,7 @@ class FileDB(Base):
             # Enhanced metadata
             "description": self.description,
             "tags": self.tags or [],
+            "folder": self.folder,
             "document_type": self.document_type,
             "language": self.language,
             "word_count": self.word_count,
@@ -84,6 +86,7 @@ class FileDB(Base):
             "page_count": self.page_count,
             "description": self.description,
             "tags": self.tags or [],
+            "folder": self.folder,
             "processing_status": self.processing_status,
             "processing_error": self.processing_error,
             "url": self.url,

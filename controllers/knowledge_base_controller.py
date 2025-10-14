@@ -6,17 +6,22 @@ from services.embedding_service import embedding_service
 from services.pinecone_service import pinecone_service
 from services.aws_s3_service import s3_service
 from services.expert_processing_progress_service import ExpertProcessingProgressService
+from services.youtube_service import youtube_service
 from models.file_db import FileDB
 from sqlalchemy.orm import Session
 import logging
 import uuid
+import os
+import httpx
 
 logger = logging.getLogger(__name__)
 
-async def upload_file(file: UploadFile, db: Session, user_id: str = None) -> Dict[str, Any]:
+async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
     """Upload file to knowledge base"""
     try:
-        logger.info(f"Starting file upload: {file.filename}, content_type: {file.content_type}")
+        # Use custom name if provided, otherwise use original filename
+        display_name = custom_name if custom_name else file.filename
+        logger.info(f"Starting file upload: {file.filename}, custom_name: {custom_name}, content_type: {file.content_type}, folder: {folder}")
         
         # Validate file
         if not file.filename:
@@ -71,11 +76,12 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None) -> Dic
         file_service = FileService(db)
         upload_result = file_service.upload_file(
             file_content=file_content,
-            file_name=file.filename,
+            file_name=display_name,
             content_type=file.content_type,
             file_size=len(file_content),
             user_id=user_id,
-            extraction_result=extraction_result if extraction_result and extraction_result.get("success") else None
+            extraction_result=extraction_result if extraction_result and extraction_result.get("success") else None,
+            folder=folder
         )
         
         logger.info(f"File service upload result: {upload_result.get('success', False)}")
@@ -447,15 +453,26 @@ async def process_expert_files(expert_id: str, agent_id: str, selected_files: li
                 
                 # Step 4: Store in Pinecone
                 logger.info(f"\U0001f4ca Storing embeddings in Pinecone for agent_id: {agent_id}")
-                pinecone_result = await pinecone_service.store_document_chunks(
-                    chunks=embeddings_data,
-                    agent_id=agent_id  # Use ElevenLabs agent_id as namespace
-                )
+                print(f"\U0001f4ca Storing {len(embeddings_data)} chunks in Pinecone for {filename}...")
                 
-                if not pinecone_result["success"]:
-                    logger.error(f"\U0001f6ab Pinecone storage failed for {filename}: {pinecone_result.get('error')}")
-                    print(f"\U0001f6ab Pinecone storage failed for {filename}: {pinecone_result.get('error')}")
-                    failed_files.append({"file_id": file_id, "error": f"Pinecone storage failed: {pinecone_result.get('error')}"})
+                try:
+                    pinecone_result = await pinecone_service.store_document_chunks(
+                        chunks=embeddings_data,
+                        agent_id=agent_id  # Use ElevenLabs agent_id as namespace
+                    )
+                    
+                    if not pinecone_result["success"]:
+                        logger.error(f"\U0001f6ab Pinecone storage failed for {filename}: {pinecone_result.get('error')}")
+                        print(f"\U0001f6ab Pinecone storage failed for {filename}: {pinecone_result.get('error')}")
+                        failed_files.append({"file_id": file_id, "error": f"Pinecone storage failed: {pinecone_result.get('error')}"})
+                        continue
+                    
+                    print(f"✅ Pinecone storage completed for {filename}: {pinecone_result.get('upserted_count', 0)} vectors stored")
+                    
+                except Exception as pinecone_error:
+                    logger.error(f"\U0001f6ab Pinecone storage exception for {filename}: {str(pinecone_error)}")
+                    print(f"\U0001f6ab Pinecone storage exception for {filename}: {str(pinecone_error)}")
+                    failed_files.append({"file_id": file_id, "error": f"Pinecone storage exception: {str(pinecone_error)}"})
                     continue
                 
                 processed_count += 1
@@ -544,3 +561,423 @@ async def process_expert_files(expert_id: str, agent_id: str, selected_files: li
             "error": f"File processing failed: {str(e)}",
             "processed_count": 0
         }
+
+async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+    """
+    Transcribe audio using ElevenLabs Speech-to-Text API and save to knowledge base
+    
+    Args:
+        file: Audio file upload
+        db: Database session
+        user_id: User who uploaded the audio
+        folder: Folder to save the transcription in
+        
+    Returns:
+        Dict containing transcription results and saved file info
+    """
+    try:
+        logger.info(f"Starting audio transcription: {file.filename}, content_type: {file.content_type}")
+        print(f"🎤 Starting audio transcription: {file.filename}, content_type: {file.content_type}")
+        
+        # Validate file
+        if not file.filename:
+            logger.error("No filename provided")
+            return {"success": False, "error": "No file provided"}
+        
+        # Read file content
+        file_content = await file.read()
+        
+        if len(file_content) == 0:
+            logger.error("File is empty")
+            return {"success": False, "error": "File is empty"}
+        
+        logger.info(f"File size: {len(file_content)} bytes")
+        print(f"📊 File size: {len(file_content)} bytes")
+        
+        # Check file size (limit to 25MB for audio)
+        max_size = 25 * 1024 * 1024  # 25MB
+        if len(file_content) > max_size:
+            logger.error(f"File size exceeds limit: {len(file_content)} bytes")
+            return {"success": False, "error": "Audio file size exceeds 25MB limit"}
+        
+        # Validate audio file type - be more lenient with content types
+        allowed_audio_types = [
+            'audio/mpeg',
+            'audio/mp3',
+            'audio/wav',
+            'audio/webm',
+            'audio/webm;codecs=opus',
+            'audio/ogg',
+            'audio/m4a',
+            'audio/x-m4a',
+            'audio/mp4'
+        ]
+        
+        # Check if content type starts with audio/ or is in allowed list
+        is_audio = file.content_type and (
+            file.content_type.startswith('audio/') or 
+            file.content_type in allowed_audio_types
+        )
+        
+        if not is_audio:
+            logger.error(f"Unsupported audio type: {file.content_type}")
+            return {"success": False, "error": f"Audio type '{file.content_type}' not supported. Supported: MP3, WAV, WebM, OGG, M4A"}
+        
+        logger.info(f"Audio validation passed: {file.filename} ({len(file_content)} bytes)")
+        print(f"✅ Audio validation passed")
+        
+        # Get ElevenLabs API key from environment
+        elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+        if not elevenlabs_api_key:
+            return {"success": False, "error": "ElevenLabs API key not configured"}
+        
+        # Call ElevenLabs Speech-to-Text API
+        logger.info("Calling ElevenLabs Speech-to-Text API...")
+        print(f"🌐 Calling ElevenLabs Speech-to-Text API...")
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Prepare multipart form data
+            files_data = {
+                "file": (file.filename, file_content, file.content_type)
+            }
+            
+            # Optional parameters - use scribe_v1 for speech-to-text
+            form_data = {
+                "model_id": "scribe_v1"  # ElevenLabs speech-to-text model
+            }
+            
+            try:
+                response = await client.post(
+                    "https://api.elevenlabs.io/v1/speech-to-text",
+                    headers={
+                        "xi-api-key": elevenlabs_api_key
+                    },
+                    files=files_data,
+                    data=form_data
+                )
+                
+                logger.info(f"ElevenLabs API response status: {response.status_code}")
+                print(f"📡 ElevenLabs API response status: {response.status_code}")
+                
+                if response.status_code != 200:
+                    error_detail = response.text
+                    logger.error(f"ElevenLabs API error: {response.status_code} - {error_detail}")
+                    print(f"❌ ElevenLabs API error: {response.status_code} - {error_detail}")
+                    return {
+                        "success": False,
+                        "error": f"Transcription failed: {error_detail}"
+                    }
+                
+                transcription_result = response.json()
+                logger.info(f"Transcription result keys: {transcription_result.keys()}")
+                print(f"✅ Transcription successful")
+                
+            except httpx.HTTPError as http_err:
+                logger.error(f"HTTP error during transcription: {str(http_err)}")
+                print(f"❌ HTTP error during transcription: {str(http_err)}")
+                return {
+                    "success": False,
+                    "error": f"Network error during transcription: {str(http_err)}"
+                }
+        
+        # Extract transcribed text
+        transcribed_text = transcription_result.get("text", "")
+        
+        if not transcribed_text or len(transcribed_text.strip()) == 0:
+            return {"success": False, "error": "No text could be transcribed from the audio"}
+        
+        logger.info(f"Transcription successful: {len(transcribed_text)} characters")
+        print(f"🎤 Transcribed {len(transcribed_text)} characters from {file.filename}")
+        
+        # Create metadata for the transcription
+        word_count = len(transcribed_text.split())
+        language_code = transcription_result.get("language_code", "unknown")
+        
+        extraction_result = {
+            "success": True,
+            "text": transcribed_text,
+            "content_type": "audio/transcription",
+            "filename": file.filename,
+            "word_count": word_count,
+            "metadata": {
+                "document_type": "audio_transcription",
+                "language": language_code,
+                "page_count": 1,
+                "has_images": False,
+                "has_tables": False,
+                "extracted_text_preview": transcribed_text[:500] + "..." if len(transcribed_text) > 500 else transcribed_text,
+                "transcription_source": "elevenlabs",
+                "original_audio_type": file.content_type
+            }
+        }
+        
+        # Save transcription as a text file in the knowledge base
+        file_service = FileService(db)
+        
+        # Convert transcribed text to bytes for storage
+        text_content = transcribed_text.encode('utf-8')
+        
+        # Generate filename for transcription
+        if custom_name:
+            transcription_filename = custom_name if custom_name.endswith('.txt') else f"{custom_name}.txt"
+        else:
+            base_filename = os.path.splitext(file.filename)[0]
+            transcription_filename = f"{base_filename}_transcription.txt"
+        
+        upload_result = file_service.upload_file(
+            file_content=text_content,
+            file_name=transcription_filename,
+            content_type="text/plain",
+            file_size=len(text_content),
+            user_id=user_id,
+            extraction_result=extraction_result,
+            folder=folder
+        )
+        
+        if not upload_result["success"]:
+            logger.error(f"Failed to save transcription: {upload_result.get('error')}")
+            return upload_result
+        
+        logger.info(f"Transcription saved successfully with ID: {upload_result['id']}")
+        print(f"✅ Transcription saved to knowledge base: {transcription_filename}")
+        
+        return {
+            "success": True,
+            "message": "Audio transcribed and saved successfully",
+            "transcription": {
+                "text": transcribed_text,
+                "word_count": word_count,
+                "language": language_code,
+                "preview": transcribed_text[:200] + "..." if len(transcribed_text) > 200 else transcribed_text
+            },
+            "file": {
+                "id": upload_result["id"],
+                "name": transcription_filename,
+                "url": upload_result["url"],
+                "s3_key": upload_result["s3_key"]
+            }
+        }
+        
+    except httpx.TimeoutException:
+        logger.error("ElevenLabs API timeout")
+        return {"success": False, "error": "Transcription request timed out. Please try with a shorter audio file."}
+    except Exception as e:
+        logger.error(f"Audio transcription failed: {str(e)}")
+        return {"success": False, "error": f"Transcription failed: {str(e)}"}
+
+async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+    """
+    Download audio from YouTube video and transcribe using ElevenLabs
+    Automatically splits long videos into chunks
+    
+    Args:
+        youtube_url: YouTube video URL
+        db: Database session
+        user_id: User who requested the transcription
+        folder: Folder to save the transcription in
+        
+    Returns:
+        Dict containing transcription results and saved file info
+    """
+    temp_files = []
+    
+    try:
+        logger.info(f"Starting YouTube video transcription: {youtube_url}")
+        print(f"🎬 Starting YouTube video transcription")
+        
+        # Step 1: Get video info
+        video_info = youtube_service.get_video_info(youtube_url)
+        if not video_info.get("success"):
+            return video_info
+        
+        video_title = video_info["title"]
+        video_duration = video_info["duration"]
+        
+        logger.info(f"Video: {video_title}, Duration: {video_duration}s")
+        
+        # Step 2: Download audio
+        download_result = youtube_service.download_audio(youtube_url)
+        if not download_result["success"]:
+            return download_result
+        
+        audio_path = download_result["audio_path"]
+        temp_files.append(audio_path)
+        
+        file_size_mb = download_result["file_size"] / (1024 * 1024)
+        logger.info(f"Audio file size: {file_size_mb:.2f} MB")
+        
+        # Step 3: Check if we need to split into chunks
+        chunk_paths = []
+        if file_size_mb > 20 or video_duration > 600:  # > 20MB or > 10 minutes
+            logger.info("Audio is large, splitting into chunks")
+            print(f"📦 Video is long, splitting into manageable chunks...")
+            chunk_paths = youtube_service.split_audio_into_chunks(audio_path, chunk_duration_minutes=10)
+            temp_files.extend(chunk_paths)
+        else:
+            chunk_paths = [audio_path]
+        
+        logger.info(f"Processing {len(chunk_paths)} audio chunk(s)")
+        print(f"🎤 Transcribing {len(chunk_paths)} audio chunk(s) with ElevenLabs...")
+        
+        # Step 4: Transcribe each chunk
+        elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+        if not elevenlabs_api_key:
+            return {"success": False, "error": "ElevenLabs API key not configured"}
+        
+        all_transcriptions = []
+        total_chunks = len(chunk_paths)
+        
+        for idx, chunk_path in enumerate(chunk_paths, 1):
+            try:
+                logger.info(f"Transcribing chunk {idx}/{total_chunks}")
+                print(f"🎙️ Transcribing chunk {idx}/{total_chunks}...")
+                
+                # Read chunk file
+                with open(chunk_path, 'rb') as f:
+                    chunk_content = f.read()
+                
+                # Call ElevenLabs API
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    files_data = {
+                        "file": (f"chunk_{idx}.mp3", chunk_content, "audio/mpeg")
+                    }
+                    
+                    form_data = {
+                        "model_id": "scribe_v1"
+                    }
+                    
+                    response = await client.post(
+                        "https://api.elevenlabs.io/v1/speech-to-text",
+                        headers={"xi-api-key": elevenlabs_api_key},
+                        files=files_data,
+                        data=form_data
+                    )
+                    
+                    if response.status_code != 200:
+                        error_detail = response.text
+                        logger.error(f"ElevenLabs API error for chunk {idx}: {response.status_code} - {error_detail}")
+                        print(f"❌ Transcription failed for chunk {idx}: {error_detail}")
+                        continue
+                    
+                    result = response.json()
+                    transcribed_text = result.get("text", "")
+                    
+                    if transcribed_text:
+                        all_transcriptions.append({
+                            "chunk": idx,
+                            "text": transcribed_text,
+                            "language": result.get("language_code", "unknown")
+                        })
+                        logger.info(f"✅ Chunk {idx} transcribed: {len(transcribed_text)} characters")
+                        print(f"✅ Chunk {idx}/{total_chunks} complete: {len(transcribed_text)} characters")
+                
+            except Exception as chunk_error:
+                logger.error(f"Error transcribing chunk {idx}: {str(chunk_error)}")
+                print(f"❌ Error transcribing chunk {idx}: {str(chunk_error)}")
+                continue
+        
+        # Step 5: Combine all transcriptions
+        if not all_transcriptions:
+            return {"success": False, "error": "No transcription could be generated from the video"}
+        
+        # Combine transcriptions with chunk markers
+        combined_text = ""
+        for trans in all_transcriptions:
+            if len(chunk_paths) > 1:
+                combined_text += f"\n\n=== Part {trans['chunk']}/{total_chunks} ===\n\n"
+            combined_text += trans['text']
+        
+        combined_text = combined_text.strip()
+        word_count = len(combined_text.split())
+        language = all_transcriptions[0].get("language", "unknown")
+        
+        logger.info(f"Combined transcription: {len(combined_text)} characters, {word_count} words")
+        print(f"📝 Total transcription: {word_count} words")
+        
+        # Step 6: Save to knowledge base
+        extraction_result = {
+            "success": True,
+            "text": combined_text,
+            "content_type": "video/transcription",
+            "filename": f"{video_title}.txt",
+            "word_count": word_count,
+            "metadata": {
+                "document_type": "youtube_transcription",
+                "language": language,
+                "page_count": 1,
+                "has_images": False,
+                "has_tables": False,
+                "extracted_text_preview": combined_text[:500] + "..." if len(combined_text) > 500 else combined_text,
+                "transcription_source": "elevenlabs",
+                "youtube_url": youtube_url,
+                "video_title": video_title,
+                "video_duration": video_duration,
+                "video_channel": video_info.get("channel", "Unknown"),
+                "chunks_processed": len(all_transcriptions)
+            }
+        }
+        
+        file_service = FileService(db)
+        text_content = combined_text.encode('utf-8')
+        
+        # Create filename for transcription
+        if custom_name:
+            transcription_filename = custom_name if custom_name.endswith('.txt') else f"{custom_name}.txt"
+        else:
+            # Create safe filename from video title
+            safe_title = "".join(c for c in video_info['title'] if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title.replace(' ', '_')
+            safe_title = safe_title[:100]  # Limit length
+            transcription_filename = f"{safe_title}_youtube_transcription.txt"
+        
+        upload_result = file_service.upload_file(
+            file_content=text_content,
+            file_name=transcription_filename,
+            content_type="text/plain",
+            file_size=len(text_content),
+            user_id=user_id,
+            extraction_result=extraction_result,
+            folder=folder
+        )
+        
+        if not upload_result["success"]:
+            logger.error(f"Failed to save transcription: {upload_result.get('error')}")
+            return upload_result
+        
+        logger.info(f"YouTube transcription saved successfully with ID: {upload_result['id']}")
+        print(f"✅ YouTube transcription saved to knowledge base!")
+        
+        return {
+            "success": True,
+            "message": "YouTube video transcribed and saved successfully",
+            "video": {
+                "title": video_title,
+                "duration": video_info["duration_formatted"],
+                "channel": video_info.get("channel", "Unknown"),
+                "url": youtube_url
+            },
+            "transcription": {
+                "text": combined_text,
+                "word_count": word_count,
+                "language": language,
+                "chunks_processed": len(all_transcriptions),
+                "preview": combined_text[:200] + "..." if len(combined_text) > 200 else combined_text
+            },
+            "file": {
+                "id": upload_result["id"],
+                "name": transcription_filename,
+                "url": upload_result["url"],
+                "s3_key": upload_result["s3_key"]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"YouTube transcription failed: {str(e)}")
+        print(f"❌ YouTube transcription failed: {str(e)}")
+        return {"success": False, "error": f"YouTube transcription failed: {str(e)}"}
+    
+    finally:
+        # Clean up temporary files
+        if temp_files:
+            logger.info(f"Cleaning up {len(temp_files)} temporary files")
+            youtube_service.cleanup_files(temp_files)

@@ -24,7 +24,7 @@ S3_REGION = os.getenv("S3_REGION", "us-east-1")
 # JWT Settings
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key-change-in-production")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 1 day = 1440 minutes
 
 # Database Settings
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://username:password@localhost:5432/dilan_ai_db")

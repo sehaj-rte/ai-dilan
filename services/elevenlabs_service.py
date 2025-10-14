@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 class ElevenLabsService:
     def __init__(self):
         # Hardcoded API key for now
-        self.api_key = "sk_080d5c92d8712bc210e293fec768eb3997309b3052a06574"
+        self.api_key = os.getenv("ELEVENLABS_API_KEY")
         self.base_url = "https://api.elevenlabs.io/v1"
         
         if not self.api_key:
