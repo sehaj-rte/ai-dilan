@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from config.database import get_db
+from dependencies.auth import get_current_user_required
 from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
 from controllers.expert_controller import (
     create_expert, get_expert, list_experts, upload_expert_content, 
@@ -25,12 +26,16 @@ class ExpertCreateRequest(BaseModel):
     voice_id: str
     avatar_base64: Optional[str] = None  # Base64 encoded image data
     selected_files: List[str] = []
-    user_id: str = "default_user"  # TODO: Get from authentication token
 
 @router.post("/", response_model=dict)
-async def create_new_expert(expert_data: ExpertCreateRequest, db: Session = Depends(get_db)):
+async def create_new_expert(
+    expert_data: ExpertCreateRequest, 
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
     """Create a new expert with ElevenLabs integration"""
     expert_dict = expert_data.dict()
+    expert_dict['user_id'] = current_user_id  # Set user_id from authenticated user
     result = await create_expert_with_elevenlabs(db, expert_dict)
     if not result["success"]:
         raise HTTPException(
@@ -50,10 +55,13 @@ def create_new_expert_legacy(expert_data: ExpertCreate):
         )
     return result
 
-@router.get("/", response_model=dict)
-def get_all_experts(db: Session = Depends(get_db)):
-    """Get all experts from database"""
-    result = list_experts_from_db(db)
+@router.get("/", response_model=List[dict])
+def get_all_experts(
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Get all experts for the current user"""
+    result = list_experts_from_db(db, current_user_id)
     if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -73,9 +81,13 @@ def get_all_experts_legacy():
     return result
 
 @router.get("/{expert_id}", response_model=dict)
-def get_expert_by_id(expert_id: str, db: Session = Depends(get_db)):
+def get_expert_by_id(
+    expert_id: str, 
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
     """Get expert by ID from database"""
-    result = get_expert_from_db(db, expert_id)
+    result = get_expert_from_db(db, expert_id, current_user_id)
     if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -138,9 +150,13 @@ def update_expert_info(expert_id: str, update_data: dict):
     return result
 
 @router.delete("/{expert_id}", response_model=dict)
-async def delete_expert_by_id(expert_id: str, db: Session = Depends(get_db)):
-    """Delete an expert and cleanup all associated resources"""
-    result = await delete_expert_from_db(db, expert_id)
+async def delete_expert_by_id(
+    expert_id: str, 
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Delete expert from database"""
+    result = await delete_expert_from_db(db, expert_id, current_user_id)
     if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

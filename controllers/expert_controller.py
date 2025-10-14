@@ -222,11 +222,17 @@ def create_expert(expert_data: ExpertCreate) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def get_expert_from_db(db: Session, expert_id: str) -> Dict[str, Any]:
+def get_expert_from_db(db: Session, expert_id: str, user_id: str = None) -> Dict[str, Any]:
     """Get expert by ID from database"""
     try:
         expert_service = ExpertService(db)
-        return expert_service.get_expert(expert_id)
+        expert = expert_service.get_expert(expert_id)
+        
+        # Check if expert belongs to user
+        if expert and user_id and expert.user_id != user_id:
+            return {"success": False, "error": "Expert not found or access denied"}
+        
+        return {"success": True, "expert": expert}
     except Exception as e:
         logger.error(f"Error getting expert: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -239,11 +245,13 @@ def get_expert(expert_id: str) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def list_experts_from_db(db: Session) -> Dict[str, Any]:
-    """List all experts from database"""
+def list_experts_from_db(db: Session, user_id: str = None) -> Dict[str, Any]:
+    """List all experts from database for a specific user"""
     try:
         expert_service = ExpertService(db)
-        return expert_service.list_experts()
+        experts = expert_service.list_experts(user_id=user_id)
+        
+        return {"success": True, "experts": experts}
     except Exception as e:
         logger.error(f"Error listing experts: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -351,10 +359,15 @@ def update_expert(expert_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-async def delete_expert_from_db(db: Session, expert_id: str) -> Dict[str, Any]:
+async def delete_expert_from_db(db: Session, expert_id: str, user_id: str = None) -> Dict[str, Any]:
     """Delete an expert from database and cleanup associated resources"""
     try:
         expert_service = ExpertService(db)
+        expert = expert_service.get_expert(expert_id)
+        
+        # Check if expert belongs to user
+        if expert and user_id and expert.user_id != user_id:
+            return {"success": False, "error": "Expert not found or access denied"}
         
         # Get expert details before deletion
         expert_result = expert_service.get_expert(expert_id)

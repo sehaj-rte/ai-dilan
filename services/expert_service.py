@@ -173,7 +173,7 @@ class ExpertService:
         List all experts
         
         Args:
-            user_id: Optional user ID to filter experts (for future use)
+            user_id: Optional user ID to filter experts by user
             active_only: Whether to return only active experts
             
         Returns:
@@ -181,6 +181,10 @@ class ExpertService:
         """
         try:
             query = self.db.query(ExpertDB)
+            
+            # Filter by user_id if provided
+            if user_id:
+                query = query.filter(ExpertDB.user_id == user_id)
             
             if active_only:
                 query = query.filter(ExpertDB.is_active == True)
