@@ -28,3 +28,8 @@ pydub==0.25.1
 
 # YouTube audio extraction
 yt-dlp>=2024.3.10
+
+# Web scraping dependencies
+beautifulsoup4>=4.12.0
+html2text>=2024.2.26
+lxml>=5.0.0

@@ -7,6 +7,7 @@ from services.pinecone_service import pinecone_service
 from services.aws_s3_service import s3_service
 from services.expert_processing_progress_service import ExpertProcessingProgressService
 from services.youtube_service import youtube_service
+from services.web_scraper_service import web_scraper_service
 from models.file_db import FileDB
 from sqlalchemy.orm import Session
 import logging
@@ -994,3 +995,150 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
         if temp_files:
             logger.info(f"Cleaning up {len(temp_files)} temporary files")
             youtube_service.cleanup_files(temp_files)
+
+
+async def scrape_and_save_website(url: str, db: Session, user_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+    """Scrape website content and save to knowledge base"""
+    try:
+        logger.info(f"🌐 Starting website scraping for URL: {url}")
+        print(f"🌐 Scraping website: {url}")
+        
+        # Scrape the website
+        scrape_result = web_scraper_service.scrape_url(url)
+        
+        if not scrape_result["success"]:
+            logger.error(f"Failed to scrape website: {scrape_result.get('error')}")
+            return scrape_result
+        
+        content = scrape_result["content"]
+        metadata = scrape_result["metadata"]
+        
+        logger.info(f"🌐 Web Scraper: Retrieved content length: {len(content)} characters")
+        logger.info(f"🌐 Web Scraper: Metadata keys: {list(metadata.keys())}")
+        logger.info(f"🌐 Web Scraper: Page title: {metadata.get('title', 'No title')}")
+        
+        # Generate filename
+        if custom_name:
+            filename = f"{custom_name}.txt"
+        else:
+            # Use page title or domain as filename
+            title = metadata.get('title', metadata.get('domain', 'webpage'))
+            # Clean title for filename - handle empty title case
+            if not title or title.strip() == '':
+                title = metadata.get('domain', 'webpage')
+            safe_title = re.sub(r'[^\w\s-]', '', str(title)).strip()
+            safe_title = re.sub(r'[-\s]+', '-', safe_title)
+            # Ensure we have a valid filename
+            if not safe_title:
+                safe_title = 'scraped-webpage'
+            filename = f"{safe_title[:50]}_scraped.txt"
+        
+        logger.info(f"🌐 Web Scraper: Generated filename: {filename}")
+        
+        logger.info(f"📝 Scraped {metadata.get('word_count', 0)} words from {metadata.get('title', url)}")
+        
+        # Create extraction result matching document_processor format
+        extraction_result = {
+            "success": True,
+            "text": content,  # Use "text" key to match document_processor
+            "content_type": "text/plain",
+            "filename": filename,
+            "word_count": metadata.get("word_count", len(content.split())),
+            "metadata": {
+                **metadata,
+                "source_type": "website_scraping",
+                "original_url": url,
+                "scraped_at": metadata.get("scraped_at"),
+                "extraction_method": "web_scraper",
+                "document_type": "webpage",
+                "language": "en"
+            }
+        }
+        
+        # Get folder name for metadata
+        folder_name = folder
+        if folder_id and folder_id != "uncategorized":
+            try:
+                # You might want to get the actual folder name from the database
+                # For now, we'll use the provided folder parameter
+                pass
+            except:
+                folder_name = "Uncategorized"
+        
+        # Save to knowledge base using existing file service
+        file_service = FileService(db)
+        upload_result = file_service.upload_file(
+            file_content=content.encode('utf-8'),
+            file_name=filename,
+            content_type="text/plain",
+            file_size=len(content.encode('utf-8')),
+            user_id=user_id,
+            extraction_result=extraction_result,
+            folder_id=folder_id,
+            folder=folder_name
+        )
+        
+        if not upload_result["success"]:
+            logger.error(f"Failed to save scraped content: {upload_result.get('error')}")
+            return upload_result
+        
+        logger.info(f"Website content saved successfully with ID: {upload_result['id']}")
+        print(f"✅ Website content saved to knowledge base!")
+        
+        return {
+            "success": True,
+            "message": "Website scraped and saved successfully",
+            "website": {
+                "title": metadata.get('title', 'Untitled'),
+                "url": url,
+                "domain": metadata.get('domain', ''),
+                "description": metadata.get('description', metadata.get('og_description', ''))
+            },
+            "content": {
+                "text": content,
+                "word_count": metadata.get('word_count', 0),
+                "content_length": metadata.get('content_length', 0),
+                "preview": content[:200] + "..." if len(content) > 200 else content
+            },
+            "file": {
+                "id": upload_result["id"],
+                "name": filename,
+                "url": upload_result["url"],
+                "s3_key": upload_result["s3_key"]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Website scraping failed: {str(e)}")
+        print(f"❌ Website scraping failed: {str(e)}")
+        return {"success": False, "error": f"Website scraping failed: {str(e)}"}
+
+
+async def get_website_preview(url: str) -> Dict[str, Any]:
+    """Get website preview information without full scraping"""
+    try:
+        logger.info(f"🔍 Getting website preview for: {url}")
+        
+        # Get page info
+        preview_result = web_scraper_service.get_page_info(url)
+        
+        if not preview_result["success"]:
+            logger.error(f"Failed to get website preview: {preview_result.get('error')}")
+            return preview_result
+        
+        logger.info(f"✅ Retrieved preview for {preview_result['metadata'].get('title', url)}")
+        
+        return {
+            "success": True,
+            "preview": {
+                "title": preview_result["metadata"].get('title', 'Untitled'),
+                "description": preview_result["metadata"].get('description', preview_result["metadata"].get('og_description', '')),
+                "domain": preview_result["metadata"].get('domain', ''),
+                "content_preview": preview_result.get('content_preview', ''),
+                "url": url
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Website preview failed: {str(e)}")
+        return {"success": False, "error": f"Website preview failed: {str(e)}"}

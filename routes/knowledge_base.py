@@ -24,6 +24,14 @@ class RenameFolderRequest(BaseModel):
 class MoveFileRequest(BaseModel):
     folder_id: str
 
+class WebScrapingRequest(BaseModel):
+    url: str
+    folder_id: str = None
+    custom_name: str = None
+
+class WebPreviewRequest(BaseModel):
+    url: str
+
 router = APIRouter()
 
 @router.post("/upload", response_model=dict)
@@ -359,6 +367,50 @@ def move_file(file_id: str, request: MoveFileRequest, db: Session = Depends(get_
     
     file_service = FileService(db)
     result = file_service.move_file_to_folder(file_id, request.folder_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+
+@router.post("/scrape-website", response_model=dict)
+async def scrape_website(
+    request: WebScrapingRequest,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Scrape website content and save to knowledge base"""
+    from controllers.knowledge_base_controller import scrape_and_save_website
+    
+    user_id = current_user_id
+    
+    result = await scrape_and_save_website(
+        url=request.url,
+        db=db,
+        user_id=user_id,
+        folder_id=request.folder_id,
+        custom_name=request.custom_name
+    )
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+
+@router.post("/website-preview", response_model=dict)
+async def get_website_preview(request: WebPreviewRequest):
+    """Get website preview information without full scraping"""
+    from controllers.knowledge_base_controller import get_website_preview
+    
+    result = await get_website_preview(request.url)
     
     if not result["success"]:
         raise HTTPException(
