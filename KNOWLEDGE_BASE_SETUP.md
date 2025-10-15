@@ -33,7 +33,7 @@ WEBHOOK_AUTH_TOKEN=your-secret-webhook-token
 S3_BUCKET_NAME=your_s3_bucket_name
 S3_ACCESS_KEY_ID=your_s3_access_key_id
 S3_SECRET_KEY=your_s3_secret_key
-S3_REGION=us-east-1
+S3_REGION=us-west-2
 ```
 
 ### 2. Pinecone Index Setup

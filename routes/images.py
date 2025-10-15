@@ -13,7 +13,7 @@ def get_s3_client():
         's3',
         aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
-        region_name=os.getenv("S3_REGION", "us-east-1")
+        region_name=os.getenv("S3_REGION", "us-west-2")
     )
 
 @router.get("/avatar/{filename}")

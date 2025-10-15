@@ -9,7 +9,7 @@ Your Neon database connection has `channel_binding=require` which can cause issu
 Remove the `channel_binding=require` parameter from your DATABASE_URL:
 
 ```
-DATABASE_URL=postgresql://neondb_owner:npg_GCO60HULTPmx@ep-weathered-shape-adu1rbm6-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require
+DATABASE_URL=postgresql://neondb_owner:npg_GCO60HULTPmx@ep-weathered-shape-adu1rbm6-pooler.c-2.us-west-2.aws.neon.tech/neondb?sslmode=require
 ```
 
 ### Option 2: Use Individual Database Variables
@@ -17,7 +17,7 @@ DATABASE_URL=postgresql://neondb_owner:npg_GCO60HULTPmx@ep-weathered-shape-adu1r
 Instead of using DATABASE_URL, set these individual variables:
 
 ```
-DB_HOST=ep-weathered-shape-adu1rbm6-pooler.c-2.us-east-1.aws.neon.tech
+DB_HOST=ep-weathered-shape-adu1rbm6-pooler.c-2.us-west-2.aws.neon.tech
 DB_PORT=5432
 DB_NAME=neondb
 DB_USER=neondb_owner

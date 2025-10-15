@@ -14,7 +14,7 @@ class AWSS3Service:
         self.bucket_name = os.getenv("S3_BUCKET_NAME", "ai-dilan")
         self.access_key_id = os.getenv("S3_ACCESS_KEY_ID")
         self.secret_key = os.getenv("S3_SECRET_KEY")
-        self.region = os.getenv("S3_REGION", "us-east-1")
+        self.region = os.getenv("S3_REGION", "us-west-2")
         
         # Initialize S3 client
         try:

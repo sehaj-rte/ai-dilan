@@ -19,7 +19,7 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 S3_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID")
 S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
-S3_REGION = os.getenv("S3_REGION", "us-east-1")
+S3_REGION = os.getenv("S3_REGION", "us-west-2")
 
 # JWT Settings
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key-change-in-production")
