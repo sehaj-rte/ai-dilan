@@ -13,7 +13,7 @@ class YouTubeService:
     def __init__(self):
         self.max_chunk_size_mb = 20  # Max chunk size for ElevenLabs (20MB to be safe)
         self.chunk_duration_minutes = 10  # Split audio into 10-minute chunks
-        self.cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', None)  # Optional cookies file path
+        self.cookies_file = "cookies.txt"  # Direct path to cookies file
     
     def get_video_info(self, youtube_url: str) -> Dict[str, Any]:
         """Get video metadata without downloading"""
