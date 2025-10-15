@@ -13,7 +13,8 @@ class YouTubeService:
     def __init__(self):
         self.max_chunk_size_mb = 20  # Max chunk size for ElevenLabs (20MB to be safe)
         self.chunk_duration_minutes = 10  # Split audio into 10-minute chunks
-        self.cookies_file = "cookies.txt"  # Direct path to cookies file
+        self.cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')  # Configurable cookies file path
+        self.youtube_cookies_txt = "YOUTUBE_COOKIES.txt"  # Alternative cookies file
     
     def get_video_info(self, youtube_url: str) -> Dict[str, Any]:
         """Get video metadata without downloading"""
@@ -27,14 +28,23 @@ class YouTubeService:
                 'extract_flat': False,
             }
             
-            # Add cookies file if specified
+            # Try multiple cookie sources in order of preference
+            cookies_used = False
+            
+            # 1. Try primary cookies file
             if self.cookies_file and os.path.exists(self.cookies_file):
                 ydl_opts['cookiefile'] = self.cookies_file
                 logger.info(f"Using cookies from: {self.cookies_file}")
+                cookies_used = True
+            # 2. Try alternative cookies file
+            elif os.path.exists(self.youtube_cookies_txt):
+                ydl_opts['cookiefile'] = self.youtube_cookies_txt
+                logger.info(f"Using cookies from: {self.youtube_cookies_txt}")
+                cookies_used = True
             else:
-                # Try to extract cookies from browser if available (only in development)
+                # 3. Try to extract cookies from browser if available (only in development)
                 try:
-                    # Check if we're in a production environment (common indicators)
+                    # Check if we're in a production environment
                     is_production = (
                         os.getenv('RENDER') or 
                         os.getenv('HEROKU') or 
@@ -44,14 +54,24 @@ class YouTubeService:
                     )
                     
                     if not is_production:
-                        ydl_opts['cookiesfrombrowser'] = ('chrome',)
-                        logger.info("Using Chrome cookies for authentication")
+                        # Try multiple browsers
+                        for browser in ['chrome', 'firefox', 'edge', 'safari']:
+                            try:
+                                ydl_opts['cookiesfrombrowser'] = (browser,)
+                                logger.info(f"Attempting to use {browser} cookies for authentication")
+                                cookies_used = True
+                                break
+                            except Exception as browser_e:
+                                logger.debug(f"Failed to get {browser} cookies: {str(browser_e)}")
+                                continue
                     else:
                         logger.info("Production environment detected, skipping browser cookies")
                 except Exception as e:
-                    # Browser cookies not available, continue without them
                     logger.info(f"Browser cookies not available: {str(e)}")
                     pass
+            
+            if not cookies_used:
+                logger.warning("No cookies available - may encounter access restrictions for some videos")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=False)
@@ -74,11 +94,28 @@ class YouTubeService:
                 return video_info
                 
         except Exception as e:
-            logger.error(f"Failed to get video info: {str(e)}")
-            print(f"❌ Failed to get video info: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"Failed to get video info: {error_msg}")
+            print(f"❌ Failed to get video info: {error_msg}")
+            
+            # Provide more helpful error messages for common authentication issues
+            if "Sign in to confirm you're not a bot" in error_msg or "cookies" in error_msg.lower():
+                user_friendly_error = (
+                    "This video requires authentication. Please ensure you have valid YouTube cookies configured. "
+                    "You may need to export fresh cookies from your browser while logged into YouTube."
+                )
+            elif "Private video" in error_msg:
+                user_friendly_error = "This is a private video that cannot be accessed."
+            elif "Video unavailable" in error_msg:
+                user_friendly_error = "This video is unavailable or has been removed."
+            elif "age-restricted" in error_msg.lower():
+                user_friendly_error = "This age-restricted video requires authentication. Please configure YouTube cookies."
+            else:
+                user_friendly_error = f"Failed to fetch video information: {error_msg}"
+            
             return {
                 "success": False,
-                "error": f"Failed to fetch video information: {str(e)}"
+                "error": user_friendly_error
             }
     
     def download_audio(self, youtube_url: str, output_path: Optional[str] = None) -> Dict[str, Any]:
@@ -115,14 +152,23 @@ class YouTubeService:
                 'progress_hooks': [self._progress_hook],
             }
             
-            # Add cookies file if specified
+            # Try multiple cookie sources in order of preference
+            cookies_used = False
+            
+            # 1. Try primary cookies file
             if self.cookies_file and os.path.exists(self.cookies_file):
                 ydl_opts['cookiefile'] = self.cookies_file
                 logger.info(f"Using cookies from: {self.cookies_file}")
+                cookies_used = True
+            # 2. Try alternative cookies file
+            elif os.path.exists(self.youtube_cookies_txt):
+                ydl_opts['cookiefile'] = self.youtube_cookies_txt
+                logger.info(f"Using cookies from: {self.youtube_cookies_txt}")
+                cookies_used = True
             else:
-                # Try to extract cookies from browser if available (only in development)
+                # 3. Try to extract cookies from browser if available (only in development)
                 try:
-                    # Check if we're in a production environment (common indicators)
+                    # Check if we're in a production environment
                     is_production = (
                         os.getenv('RENDER') or 
                         os.getenv('HEROKU') or 
@@ -132,14 +178,24 @@ class YouTubeService:
                     )
                     
                     if not is_production:
-                        ydl_opts['cookiesfrombrowser'] = ('chrome',)
-                        logger.info("Using Chrome cookies for authentication")
+                        # Try multiple browsers
+                        for browser in ['chrome', 'firefox', 'edge', 'safari']:
+                            try:
+                                ydl_opts['cookiesfrombrowser'] = (browser,)
+                                logger.info(f"Attempting to use {browser} cookies for authentication")
+                                cookies_used = True
+                                break
+                            except Exception as browser_e:
+                                logger.debug(f"Failed to get {browser} cookies: {str(browser_e)}")
+                                continue
                     else:
                         logger.info("Production environment detected, skipping browser cookies")
                 except Exception as e:
-                    # Browser cookies not available, continue without them
                     logger.info(f"Browser cookies not available: {str(e)}")
                     pass
+            
+            if not cookies_used:
+                logger.warning("No cookies available - may encounter access restrictions for some videos")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=True)
@@ -164,11 +220,28 @@ class YouTubeService:
                 }
                 
         except Exception as e:
-            logger.error(f"Audio download failed: {str(e)}")
-            print(f"❌ Audio download failed: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"Audio download failed: {error_msg}")
+            print(f"❌ Audio download failed: {error_msg}")
+            
+            # Provide more helpful error messages for common authentication issues
+            if "Sign in to confirm you're not a bot" in error_msg or "cookies" in error_msg.lower():
+                user_friendly_error = (
+                    "This video requires authentication. Please ensure you have valid YouTube cookies configured. "
+                    "You may need to export fresh cookies from your browser while logged into YouTube."
+                )
+            elif "Private video" in error_msg:
+                user_friendly_error = "This is a private video that cannot be accessed."
+            elif "Video unavailable" in error_msg:
+                user_friendly_error = "This video is unavailable or has been removed."
+            elif "age-restricted" in error_msg.lower():
+                user_friendly_error = "This age-restricted video requires authentication. Please configure YouTube cookies."
+            else:
+                user_friendly_error = f"Failed to download audio: {error_msg}"
+            
             return {
                 "success": False,
-                "error": f"Failed to download audio: {str(e)}"
+                "error": user_friendly_error
             }
     
     def split_audio_into_chunks(self, audio_path: str, chunk_duration_minutes: int = 10) -> List[str]:
