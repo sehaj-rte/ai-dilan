@@ -133,17 +133,47 @@ class FileService:
             self.db.rollback()
             return {"success": False, "error": f"Database error: {str(e)}"}
     
-    def get_files(self, user_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get all files, optionally filtered by user"""
+    def get_files(self, user_id: Optional[str] = None, folder_id: Optional[str] = None, 
+                  page: int = 1, limit: int = 10, search: Optional[str] = None) -> Dict[str, Any]:
+        """Get files with pagination and filtering"""
         try:
-            print(f"\U0001f4c2 File Service: Retrieving files for user {user_id}")
+            print(f"📂 File Service: Retrieving files for user {user_id}, folder {folder_id}, page {page}")
+            
+            # Base query
             query = self.db.query(FileDB)
             
+            # Filter by user
             if user_id:
                 query = query.filter(FileDB.user_id == uuid.UUID(user_id))
             
-            files = query.order_by(FileDB.created_at.desc()).all()
-            print(f"\U0001f389 File Service: Found {len(files)} files")
+            # Filter by folder
+            if folder_id:
+                try:
+                    folder_uuid = uuid.UUID(folder_id)
+                    query = query.filter(FileDB.folder_id == folder_uuid)
+                    print(f"🔍 Filtering by folder_id: {folder_id}")
+                except ValueError:
+                    print(f"❌ Invalid folder_id format: {folder_id}")
+                    return {"success": False, "error": f"Invalid folder_id format: {folder_id}"}
+            
+            # Search functionality
+            if search and search.strip():
+                search_term = f"%{search.strip()}%"
+                query = query.filter(
+                    FileDB.name.ilike(search_term) |
+                    FileDB.original_name.ilike(search_term) |
+                    FileDB.extracted_text_preview.ilike(search_term)
+                )
+                print(f"🔍 Searching for: {search}")
+            
+            # Get total count before pagination
+            total_count = query.count()
+            
+            # Apply pagination
+            offset = (page - 1) * limit
+            files = query.order_by(FileDB.created_at.desc()).offset(offset).limit(limit).all()
+            
+            print(f"✅ File Service: Found {len(files)} files (page {page} of {(total_count + limit - 1) // limit})")
             
             # Convert to dict but exclude full extracted_text for performance
             files_list = []
@@ -153,10 +183,22 @@ class FileService:
                 file_dict.pop('extracted_text', None)
                 files_list.append(file_dict)
             
+            # Calculate pagination info
+            total_pages = (total_count + limit - 1) // limit
+            has_next = page < total_pages
+            has_previous = page > 1
+            
             return {
                 "success": True,
                 "files": files_list,
-                "total": len(files)
+                "pagination": {
+                    "current_page": page,
+                    "total_pages": total_pages,
+                    "total_records": total_count,
+                    "per_page": limit,
+                    "has_next": has_next,
+                    "has_previous": has_previous
+                }
             }
             
         except Exception as e:

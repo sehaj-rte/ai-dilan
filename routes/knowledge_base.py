@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends, Form
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends, Form, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from typing import Optional
 from config.database import get_db
 from dependencies.auth import get_current_user_required
 from controllers.knowledge_base_controller import (
@@ -49,11 +50,24 @@ async def upload_file(
 
 @router.get("/files", response_model=dict)
 def get_files(
+    folder_id: Optional[str] = Query(None, description="Filter by folder ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search query"),
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
 ):
-    """Get all uploaded files"""
-    result = get_files_controller(db, current_user_id)
+    """Get uploaded files with pagination and filtering"""
+    from services.file_service import FileService
+    
+    file_service = FileService(db)
+    result = file_service.get_files(
+        user_id=current_user_id,
+        folder_id=folder_id,
+        page=page,
+        limit=limit,
+        search=search
+    )
     
     if not result["success"]:
         raise HTTPException(
