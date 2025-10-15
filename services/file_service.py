@@ -13,7 +13,7 @@ class FileService:
     def __init__(self, db: Session):
         self.db = db
     
-    def upload_file(self, file_content: bytes, file_name: str, content_type: str, file_size: int, user_id: Optional[str] = None, extraction_result: Optional[Dict[str, Any]] = None, folder: str = "Uncategorized") -> Dict[str, Any]:
+    def upload_file(self, file_content: bytes, file_name: str, content_type: str, file_size: int, user_id: Optional[str] = None, extraction_result: Optional[Dict[str, Any]] = None, folder_id: Optional[str] = None, folder: str = "Uncategorized") -> Dict[str, Any]:
         """Upload file to S3 and save metadata to database"""
         try:
             print(f"\U0001f4c1 File Service: Starting upload for {file_name}, size: {file_size}")
@@ -51,6 +51,35 @@ class FileService:
                     print(f"\U0001f6ab File Service: Invalid user_id format: {user_id}")
                     return {"success": False, "error": f"Invalid user_id format: {user_id}"}
             
+            # Resolve folder_id
+            folder_uuid = None
+            if folder_id:
+                try:
+                    folder_uuid = uuid.UUID(folder_id)
+                    # Verify folder exists
+                    folder_exists = self.db.query(FolderDB).filter(FolderDB.id == folder_uuid).first()
+                    if not folder_exists:
+                        logger.error(f"FileService: Folder with ID {folder_id} not found")
+                        return {"success": False, "error": f"Folder with ID {folder_id} not found"}
+                    folder = folder_exists.name  # Update folder name for backward compatibility
+                    logger.info(f"FileService: Using folder_id: {folder_uuid}, name: {folder}")
+                except ValueError as e:
+                    logger.error(f"FileService: Invalid folder_id format: {folder_id}, error: {e}")
+                    return {"success": False, "error": f"Invalid folder_id format: {folder_id}"}
+            else:
+                # If no folder_id provided, try to find or create "Uncategorized" folder
+                uncategorized_folder = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized").first()
+                if uncategorized_folder:
+                    folder_uuid = uncategorized_folder.id
+                    logger.info(f"FileService: Using existing Uncategorized folder: {folder_uuid}")
+                else:
+                    # Create Uncategorized folder if it doesn't exist
+                    uncategorized_folder = FolderDB(name="Uncategorized", user_id=user_uuid)
+                    self.db.add(uncategorized_folder)
+                    self.db.flush()  # Get the ID without committing
+                    folder_uuid = uncategorized_folder.id
+                    logger.info(f"FileService: Created new Uncategorized folder: {folder_uuid}")
+            
             # Determine processing status based on extraction result
             # If extraction was successful, mark as completed
             # Otherwise, mark as pending (for files that need processing)
@@ -70,7 +99,8 @@ class FileService:
                 content=file_content if store_content_in_db else None,  # Store content as fallback
                 
                 # Enhanced metadata
-                folder=folder,  # Set folder/category
+                folder_id=folder_uuid,  # Set folder ID (primary)
+                folder=folder,  # Set folder/category (backward compatibility)
                 document_type=metadata.get("document_type"),
                 language=metadata.get("language"),
                 word_count=extraction_result.get("word_count") if extraction_result else None,
@@ -231,19 +261,20 @@ class FileService:
             
             all_folders = folders_query.all()
             
-            # Get file counts for each folder
-            files_query = self.db.query(FileDB.folder, func.count(FileDB.id).label('count'))
+            # Get file counts for each folder using folder_id
+            files_query = self.db.query(FileDB.folder_id, func.count(FileDB.id).label('count'))
             if user_id:
                 files_query = files_query.filter(FileDB.user_id == uuid.UUID(user_id))
             
-            file_counts = dict(files_query.group_by(FileDB.folder).all())
+            file_counts = dict(files_query.group_by(FileDB.folder_id).all())
             
             # Combine folders with their counts
             folder_list = []
             for folder in all_folders:
                 folder_list.append({
+                    "id": str(folder.id),
                     "name": folder.name,
-                    "count": file_counts.get(folder.name, 0)
+                    "count": file_counts.get(folder.id, 0)
                 })
             
             # Sort: Uncategorized last, others alphabetically
@@ -338,30 +369,47 @@ class FileService:
             self.db.rollback()
             return {"success": False, "error": f"Database error: {str(e)}"}
     
-    def delete_folder(self, folder_name: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+    def delete_folder(self, folder_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Delete a folder (moves all files to Uncategorized)"""
         try:
-            if folder_name == "Uncategorized":
+            # Validate folder_id
+            try:
+                folder_uuid = uuid.UUID(folder_id)
+            except ValueError:
+                return {"success": False, "error": f"Invalid folder_id format: {folder_id}"}
+            
+            # Get folder to check if it's Uncategorized
+            folder_record = self.db.query(FolderDB).filter(FolderDB.id == folder_uuid).first()
+            if not folder_record:
+                return {"success": False, "error": "Folder not found"}
+            
+            if folder_record.name == "Uncategorized":
                 return {"success": False, "error": "Cannot delete Uncategorized folder"}
             
-            query = self.db.query(FileDB).filter(FileDB.folder == folder_name)
+            # Get Uncategorized folder for moving files
+            uncategorized_folder = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized").first()
+            if not uncategorized_folder:
+                return {"success": False, "error": "Uncategorized folder not found"}
             
+            # Find all files in this folder
+            query = self.db.query(FileDB).filter(FileDB.folder_id == folder_uuid)
             if user_id:
                 query = query.filter(FileDB.user_id == uuid.UUID(user_id))
             
             files = query.all()
             
-            if not files:
-                return {"success": False, "error": "Folder not found"}
-            
+            # Move files to Uncategorized
             for file in files:
-                file.folder = "Uncategorized"
+                file.folder_id = uncategorized_folder.id
+                file.folder = "Uncategorized"  # Update for backward compatibility
             
+            # Delete the folder record
+            self.db.delete(folder_record)
             self.db.commit()
             
             return {
                 "success": True,
-                "message": f"Deleted folder '{folder_name}', moved {len(files)} files to Uncategorized",
+                "message": f"Deleted folder '{folder_record.name}', moved {len(files)} files to Uncategorized",
                 "files_moved": len(files)
             }
             
@@ -369,19 +417,35 @@ class FileService:
             self.db.rollback()
             return {"success": False, "error": f"Database error: {str(e)}"}
     
-    def move_file_to_folder(self, file_id: str, folder_name: str) -> Dict[str, Any]:
-        """Move a file to a different folder"""
+    def move_file_to_folder(self, file_id: str, folder_id: str) -> Dict[str, Any]:
+        """Move a file to a different folder using folder_id"""
         try:
             file_record = self.db.query(FileDB).filter(FileDB.id == uuid.UUID(file_id)).first()
             
             if not file_record:
                 return {"success": False, "error": "File not found"}
             
-            if not folder_name or folder_name.strip() == "":
+            # Validate folder_id and get folder
+            if not folder_id:
+                # Default to Uncategorized
+                uncategorized_folder = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized").first()
+                if not uncategorized_folder:
+                    return {"success": False, "error": "Uncategorized folder not found"}
+                folder_uuid = uncategorized_folder.id
                 folder_name = "Uncategorized"
+            else:
+                try:
+                    folder_uuid = uuid.UUID(folder_id)
+                    folder_record = self.db.query(FolderDB).filter(FolderDB.id == folder_uuid).first()
+                    if not folder_record:
+                        return {"success": False, "error": f"Folder with ID {folder_id} not found"}
+                    folder_name = folder_record.name
+                except ValueError:
+                    return {"success": False, "error": f"Invalid folder_id format: {folder_id}"}
             
             old_folder = file_record.folder
-            file_record.folder = folder_name.strip()
+            file_record.folder_id = folder_uuid
+            file_record.folder = folder_name  # Update for backward compatibility
             
             self.db.commit()
             

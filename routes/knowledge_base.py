@@ -13,7 +13,7 @@ from controllers.knowledge_base_controller import (
 
 class YouTubeTranscribeRequest(BaseModel):
     youtube_url: str
-    folder: str = "Uncategorized"
+    folder_id: str = None
     custom_name: str = None
 
 class RenameFolderRequest(BaseModel):
@@ -21,14 +21,15 @@ class RenameFolderRequest(BaseModel):
     new_name: str
 
 class MoveFileRequest(BaseModel):
-    folder_name: str
+    folder_id: str
 
 router = APIRouter()
 
 @router.post("/upload", response_model=dict)
 async def upload_file(
     file: UploadFile = File(...), 
-    folder: str = Form("Uncategorized"),
+    folder_id: str = Form(None),
+    folder: str = Form("Uncategorized"),  # Keep for backward compatibility
     custom_name: str = Form(None),
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
@@ -36,7 +37,7 @@ async def upload_file(
     """Upload file to knowledge base"""
     user_id = current_user_id
     
-    result = await upload_file_controller(file, db, user_id, folder, custom_name)
+    result = await upload_file_controller(file, db, user_id, folder_id, folder, custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -206,17 +207,18 @@ def get_document_details(document_id: str, db: Session = Depends(get_db)):
 @router.post("/transcribe-audio", response_model=dict)
 async def transcribe_audio(
     file: UploadFile = File(...),
-    folder: str = Form("Uncategorized"),
+    folder_id: str = Form(None),
+    folder: str = Form("Uncategorized"),  # Keep for backward compatibility
     custom_name: str = Form(None),
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
 ):
-    """Transcribe audio using ElevenLabs Speech-to-Text API and save to knowledge base"""
+    """Transcribe audio file and save to knowledge base"""
     from controllers.knowledge_base_controller import transcribe_and_save_audio
     
     user_id = current_user_id
     
-    result = await transcribe_and_save_audio(file, db, user_id, folder, custom_name)
+    result = await transcribe_and_save_audio(file, db, user_id, folder_id, folder, custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -237,7 +239,7 @@ async def transcribe_youtube(
     
     user_id = current_user_id
     
-    result = await transcribe_youtube_video(request.youtube_url, db, user_id, request.folder, request.custom_name)
+    result = await transcribe_youtube_video(request.youtube_url, db, user_id, request.folder_id, request.custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -314,9 +316,9 @@ def rename_folder(
     
     return result
 
-@router.delete("/folders/{folder_name}", response_model=dict)
+@router.delete("/folders/{folder_id}", response_model=dict)
 def delete_folder(
-    folder_name: str,
+    folder_id: str,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
 ):
@@ -326,7 +328,7 @@ def delete_folder(
     user_id = current_user_id
     
     file_service = FileService(db)
-    result = file_service.delete_folder(folder_name, user_id)
+    result = file_service.delete_folder(folder_id, user_id)
     
     if not result["success"]:
         raise HTTPException(
@@ -342,7 +344,7 @@ def move_file(file_id: str, request: MoveFileRequest, db: Session = Depends(get_
     from services.file_service import FileService
     
     file_service = FileService(db)
-    result = file_service.move_file_to_folder(file_id, request.folder_name)
+    result = file_service.move_file_to_folder(file_id, request.folder_id)
     
     if not result["success"]:
         raise HTTPException(

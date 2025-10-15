@@ -16,7 +16,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
     """Upload file to knowledge base"""
     try:
         # Use custom name if provided, otherwise use original filename
@@ -81,6 +81,7 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder
             file_size=len(file_content),
             user_id=user_id,
             extraction_result=extraction_result if extraction_result and extraction_result.get("success") else None,
+            folder_id=folder_id,
             folder=folder
         )
         
@@ -562,7 +563,7 @@ async def process_expert_files(expert_id: str, agent_id: str, selected_files: li
             "processed_count": 0
         }
 
-async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
     """
     Transcribe audio using ElevenLabs Speech-to-Text API and save to knowledge base
     
@@ -731,6 +732,7 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
             file_size=len(text_content),
             user_id=user_id,
             extraction_result=extraction_result,
+            folder_id=folder_id,
             folder=folder
         )
         
@@ -765,7 +767,7 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
         logger.error(f"Audio transcription failed: {str(e)}")
         return {"success": False, "error": f"Transcription failed: {str(e)}"}
 
-async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str = None, folder_id: str = None, custom_name: str = None) -> Dict[str, Any]:
     """
     Download audio from YouTube video and transcribe using ElevenLabs
     Automatically splits long videos into chunks
@@ -920,13 +922,26 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
         file_service = FileService(db)
         text_content = combined_text.encode('utf-8')
         
+        # Convert folder_id to folder_name if provided
+        folder_name = "Uncategorized"  # Default
+        if folder_id:
+            try:
+                from models.folder_db import FolderDB
+                folder_record = db.query(FolderDB).filter(FolderDB.id == folder_id).first()
+                if folder_record:
+                    folder_name = folder_record.name
+                else:
+                    logger.warning(f"Folder ID {folder_id} not found, using Uncategorized")
+            except Exception as e:
+                logger.error(f"Error getting folder name: {str(e)}")
+        
         # Create filename for transcription
         if custom_name:
             transcription_filename = custom_name if custom_name.endswith('.txt') else f"{custom_name}.txt"
         else:
             # Create safe filename from video title
-            safe_title = "".join(c for c in video_info['title'] if c.isalnum() or c in (' ', '-', '_')).strip()
-            safe_title = safe_title.replace(' ', '_')
+            safe_title = re.sub(r'[^\w\s-]', '', video_info["title"])
+            safe_title = re.sub(r'[-\s]+', '_', safe_title)
             safe_title = safe_title[:100]  # Limit length
             transcription_filename = f"{safe_title}_youtube_transcription.txt"
         
@@ -937,7 +952,8 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
             file_size=len(text_content),
             user_id=user_id,
             extraction_result=extraction_result,
-            folder=folder
+            folder_id=folder_id,
+            folder=folder_name
         )
         
         if not upload_result["success"]:

@@ -1,5 +1,6 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, JSON, Boolean, LargeBinary
+from sqlalchemy import Column, String, Integer, DateTime, Text, JSON, Boolean, LargeBinary, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from config.database import Base
 from datetime import datetime
 import uuid
@@ -20,7 +21,8 @@ class FileDB(Base):
     # Enhanced metadata fields
     description = Column(Text, nullable=True)  # User-provided description
     tags = Column(JSON, nullable=True)  # Array of tags for categorization
-    folder = Column(String(255), default="Uncategorized", nullable=False)  # Folder/category name
+    folder_id = Column(UUID(as_uuid=True), ForeignKey('folders.id'), nullable=True)  # Reference to folder
+    folder = Column(String(255), default="Uncategorized", nullable=False)  # Folder/category name (deprecated, kept for migration)
     document_type = Column(String(50), nullable=True)  # auto-detected: pdf, docx, image, etc.
     language = Column(String(10), nullable=True)  # detected language
     word_count = Column(Integer, nullable=True)  # extracted word count
@@ -39,6 +41,9 @@ class FileDB(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Relationships
+    folder_rel = relationship("FolderDB", foreign_keys=[folder_id])
+    
     def to_dict(self):
         return {
             "id": str(self.id),
@@ -53,7 +58,8 @@ class FileDB(Base):
             # Enhanced metadata
             "description": self.description,
             "tags": self.tags or [],
-            "folder": self.folder,
+            "folder_id": str(self.folder_id) if self.folder_id else None,
+            "folder": self.folder,  # Keep for backward compatibility during migration
             "document_type": self.document_type,
             "language": self.language,
             "word_count": self.word_count,
@@ -86,7 +92,8 @@ class FileDB(Base):
             "page_count": self.page_count,
             "description": self.description,
             "tags": self.tags or [],
-            "folder": self.folder,
+            "folder_id": str(self.folder_id) if self.folder_id else None,
+            "folder": self.folder,  # Keep for backward compatibility during migration
             "processing_status": self.processing_status,
             "processing_error": self.processing_error,
             "url": self.url,
