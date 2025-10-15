@@ -596,11 +596,7 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
         logger.info(f"File size: {len(file_content)} bytes")
         print(f"📊 File size: {len(file_content)} bytes")
         
-        # Check file size (limit to 25MB for audio)
-        max_size = 25 * 1024 * 1024  # 25MB
-        if len(file_content) > max_size:
-            logger.error(f"File size exceeds limit: {len(file_content)} bytes")
-            return {"success": False, "error": "Audio file size exceeds 25MB limit"}
+        # No file size limit for audio files
         
         # Validate audio file type - be more lenient with content types
         allowed_audio_types = [
