@@ -15,6 +15,23 @@ class YouTubeService:
         self.chunk_duration_minutes = 10  # Split audio into 10-minute chunks
         self.cookies_file = os.getenv('YOUTUBE_COOKIES_FILE', 'cookies.txt')  # Configurable cookies file path
         self.youtube_cookies_txt = "YOUTUBE_COOKIES.txt"  # Alternative cookies file
+        self.cookies_content = os.getenv('YOUTUBE_COOKIES_CONTENT')  # Cookies content as env var
+    
+    def _create_cookies_file_from_env(self) -> Optional[str]:
+        """Create temporary cookies file from environment variable content"""
+        if not self.cookies_content:
+            return None
+        
+        try:
+            import tempfile
+            temp_cookies_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+            temp_cookies_file.write(self.cookies_content)
+            temp_cookies_file.close()
+            logger.info(f"Created temporary cookies file: {temp_cookies_file.name}")
+            return temp_cookies_file.name
+        except Exception as e:
+            logger.error(f"Failed to create cookies file from environment: {str(e)}")
+            return None
     
     def get_video_info(self, youtube_url: str) -> Dict[str, Any]:
         """Get video metadata without downloading"""
