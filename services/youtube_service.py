@@ -32,11 +32,25 @@ class YouTubeService:
                 ydl_opts['cookiefile'] = self.cookies_file
                 logger.info(f"Using cookies from: {self.cookies_file}")
             else:
-                # Try to extract cookies from browser if available
+                # Try to extract cookies from browser if available (only in development)
                 try:
-                    ydl_opts['cookiesfrombrowser'] = ('chrome',)
-                except Exception:
+                    # Check if we're in a production environment (common indicators)
+                    is_production = (
+                        os.getenv('RENDER') or 
+                        os.getenv('HEROKU') or 
+                        os.getenv('VERCEL') or
+                        '/opt/render/' in os.getcwd() or
+                        '/app/' in os.getcwd()
+                    )
+                    
+                    if not is_production:
+                        ydl_opts['cookiesfrombrowser'] = ('chrome',)
+                        logger.info("Using Chrome cookies for authentication")
+                    else:
+                        logger.info("Production environment detected, skipping browser cookies")
+                except Exception as e:
                     # Browser cookies not available, continue without them
+                    logger.info(f"Browser cookies not available: {str(e)}")
                     pass
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -106,11 +120,25 @@ class YouTubeService:
                 ydl_opts['cookiefile'] = self.cookies_file
                 logger.info(f"Using cookies from: {self.cookies_file}")
             else:
-                # Try to extract cookies from browser if available
+                # Try to extract cookies from browser if available (only in development)
                 try:
-                    ydl_opts['cookiesfrombrowser'] = ('chrome',)
-                except Exception:
+                    # Check if we're in a production environment (common indicators)
+                    is_production = (
+                        os.getenv('RENDER') or 
+                        os.getenv('HEROKU') or 
+                        os.getenv('VERCEL') or
+                        '/opt/render/' in os.getcwd() or
+                        '/app/' in os.getcwd()
+                    )
+                    
+                    if not is_production:
+                        ydl_opts['cookiesfrombrowser'] = ('chrome',)
+                        logger.info("Using Chrome cookies for authentication")
+                    else:
+                        logger.info("Production environment detected, skipping browser cookies")
+                except Exception as e:
                     # Browser cookies not available, continue without them
+                    logger.info(f"Browser cookies not available: {str(e)}")
                     pass
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
