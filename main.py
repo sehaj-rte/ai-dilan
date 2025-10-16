@@ -49,12 +49,18 @@ async def shutdown_event():
     except Exception as e:
         print(f"❌ Error stopping queue worker: {e}")
 
-# Add CORS middleware - Allow all origins
+# Add CORS middleware - Allow specific origins for development and production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=False,  # Must be False when using wildcard
-    allow_methods=["*"],
+    allow_origins=[
+        "http://localhost:3000",  # Next.js development server
+        "http://127.0.0.1:3000",  # Alternative localhost
+        "https://ai-dilan-frontend.onrender.com",  # Production frontend
+        "http://localhost:3001",  # Alternative dev port
+        "https://localhost:3000",  # HTTPS localhost
+    ],
+    allow_credentials=True,  # Allow credentials for authenticated requests
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
