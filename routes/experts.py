@@ -7,7 +7,7 @@ from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
 from controllers.expert_controller import (
     create_expert, get_expert, list_experts, upload_expert_content, 
     ask_expert, update_expert, delete_expert, create_expert_with_elevenlabs,
-    get_expert_from_db, list_experts_from_db, delete_expert_from_db
+    get_expert_from_db, list_experts_from_db, delete_expert_from_db, update_expert_in_db
 )
 from controllers.knowledge_base_controller import process_expert_files
 from services.expert_service import ExpertService
@@ -143,9 +143,14 @@ def ask_expert_question(expert_id: str, question_data: dict):
     return result
 
 @router.put("/{expert_id}", response_model=dict)
-def update_expert_info(expert_id: str, update_data: dict):
-    """Update expert information"""
-    result = update_expert(expert_id, update_data)
+async def update_expert_info(
+    expert_id: str, 
+    update_data: dict,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Update expert information and sync with ElevenLabs"""
+    result = await update_expert_in_db(db, expert_id, update_data, current_user_id)
     if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

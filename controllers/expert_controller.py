@@ -192,13 +192,18 @@ def get_expert_from_db(db: Session, expert_id: str, user_id: str = None) -> Dict
     """Get expert by ID from database"""
     try:
         expert_service = ExpertService(db)
-        expert = expert_service.get_expert(expert_id)
+        result = expert_service.get_expert(expert_id)
+        
+        if not result["success"]:
+            return result
+        
+        expert_data = result["expert"]
         
         # Check if expert belongs to user
-        if expert and user_id and expert.user_id != user_id:
+        if user_id and expert_data.get("user_id") != user_id:
             return {"success": False, "error": "Expert not found or access denied"}
         
-        return {"success": True, "expert": expert}
+        return {"success": True, "expert": expert_data}
     except Exception as e:
         logger.error(f"Error getting expert: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -308,8 +313,68 @@ def ask_expert(expert_id: str, question: str) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+async def update_expert_in_db(db: Session, expert_id: str, update_data: Dict[str, Any], user_id: str = None) -> Dict[str, Any]:
+    """Update expert information in database and ElevenLabs"""
+    try:
+        expert_service = ExpertService(db)
+        
+        # Get expert details
+        expert_result = expert_service.get_expert(expert_id)
+        if not expert_result["success"]:
+            return {"success": False, "error": "Expert not found"}
+        
+        expert_data = expert_result["expert"]
+        
+        # Check if expert belongs to user
+        if user_id and expert_data.get("user_id") != user_id:
+            return {"success": False, "error": "Expert not found or access denied"}
+        
+        # If voice_id is being updated, update ElevenLabs agent
+        if "voice_id" in update_data and expert_data.get("elevenlabs_agent_id"):
+            try:
+                logger.info(f"Updating ElevenLabs agent voice for expert {expert_id}, agent_id: {expert_data['elevenlabs_agent_id']}, voice_id: {update_data['voice_id']}")
+                elevenlabs_result = await elevenlabs_service.update_agent(
+                    agent_id=expert_data["elevenlabs_agent_id"],
+                    voice_id=update_data["voice_id"]
+                )
+                
+                logger.info(f"ElevenLabs update result: {elevenlabs_result}")
+                
+                if not elevenlabs_result["success"]:
+                    error_msg = elevenlabs_result.get('error', 'Unknown error')
+                    logger.error(f"Failed to update ElevenLabs agent voice: {error_msg}")
+                    return {
+                        "success": False,
+                        "error": f"Failed to update voice in ElevenLabs: {error_msg}"
+                    }
+                
+                logger.info(f"Successfully updated ElevenLabs agent voice to {update_data['voice_id']}")
+            except Exception as e:
+                logger.error(f"Exception updating ElevenLabs agent: {str(e)}", exc_info=True)
+                return {
+                    "success": False,
+                    "error": f"Failed to update voice: {str(e)}"
+                }
+        
+        # Update expert in database
+        result = expert_service.update_expert(expert_id, update_data)
+        
+        if not result["success"]:
+            return result
+        
+        logger.info(f"Successfully updated expert {expert_id}")
+        return {
+            "success": True,
+            "expert": result["expert"],
+            "message": "Expert updated successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating expert: {str(e)}")
+        return {"success": False, "error": f"Failed to update expert: {str(e)}"}
+
 def update_expert(expert_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Update expert information"""
+    """Legacy update expert function - kept for backward compatibility"""
     try:
         expert = experts_db.get(expert_id)
         if not expert:

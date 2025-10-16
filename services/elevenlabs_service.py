@@ -257,6 +257,8 @@ class ElevenLabsService:
             if not payload:
                 return {"success": False, "error": "No update data provided"}
             
+            logger.info(f"Updating agent {agent_id} with payload: {payload}")
+            
             async with httpx.AsyncClient() as client:
                 response = await client.patch(url, json=payload, headers=self.headers)
                 
@@ -264,15 +266,15 @@ class ElevenLabsService:
                     logger.info(f"Successfully updated ElevenLabs agent: {agent_id}")
                     return {"success": True, "data": response.json()}
                 else:
-                    logger.error(f"ElevenLabs update API error: {response.status_code} - {response.text}")
+                    error_text = response.text
+                    logger.error(f"ElevenLabs update API error: {response.status_code} - {error_text}")
                     return {
                         "success": False,
-                        "error": f"ElevenLabs API error: {response.status_code}",
-                        "details": response.text
+                        "error": f"ElevenLabs API returned {response.status_code}: {error_text}"
                     }
                     
         except Exception as e:
-            logger.error(f"Error updating ElevenLabs agent: {str(e)}")
+            logger.error(f"Exception updating ElevenLabs agent: {str(e)}", exc_info=True)
             return {
                 "success": False,
                 "error": f"Failed to update agent: {str(e)}"
