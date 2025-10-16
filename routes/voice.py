@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, UploadFile, File
-from controllers.voice_controller import transcribe_voice, synthesize_voice, get_elevenlabs_voices
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Query
+from controllers.voice_controller import transcribe_voice, synthesize_voice, get_elevenlabs_voices, get_voice_details, synthesize_elevenlabs_voice
+from typing import Optional
 
 router = APIRouter()
 
@@ -50,9 +51,63 @@ def get_available_voices():
     }
 
 @router.get("/elevenlabs-voices", response_model=dict)
-def get_elevenlabs_voices_endpoint():
-    """Get list of ElevenLabs voices"""
-    result = get_elevenlabs_voices()
+def get_elevenlabs_voices_endpoint(
+    search: Optional[str] = Query(None, description="Search term to filter voices"),
+    voice_type: Optional[str] = Query(None, description="Voice type filter"),
+    category: Optional[str] = Query(None, description="Category filter"),
+    page_size: int = Query(50, ge=1, le=100, description="Number of voices per page"),
+    next_page_token: Optional[str] = Query(None, description="Token for next page"),
+    sort: Optional[str] = Query(None, description="Sort field"),
+    sort_direction: Optional[str] = Query(None, description="Sort direction")
+):
+    """Get list of ElevenLabs voices with advanced filtering and pagination"""
+    result = get_elevenlabs_voices(
+        search=search,
+        voice_type=voice_type,
+        category=category,
+        page_size=page_size,
+        next_page_token=next_page_token,
+        sort=sort,
+        sort_direction=sort_direction
+    )
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    return result
+
+@router.get("/elevenlabs-voices/{voice_id}", response_model=dict)
+def get_voice_details_endpoint(voice_id: str):
+    """Get detailed information about a specific ElevenLabs voice"""
+    result = get_voice_details(voice_id)
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result["error"]
+        )
+    return result
+
+@router.post("/synthesize-elevenlabs", response_model=dict)
+def synthesize_elevenlabs_speech(voice_data: dict):
+    """Convert text to speech using ElevenLabs"""
+    text = voice_data.get("text", "")
+    voice_id = voice_data.get("voice_id", "")
+    settings = voice_data.get("settings", {})
+    
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text is required"
+        )
+    
+    if not voice_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Voice ID is required"
+        )
+    
+    result = synthesize_elevenlabs_voice(text, voice_id, settings)
     if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

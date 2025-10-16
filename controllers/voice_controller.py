@@ -84,13 +84,27 @@ def get_voice_info(voice_id: str) -> Dict[str, Any]:
         }
     }
 
-def get_elevenlabs_voices() -> Dict[str, Any]:
-    """Get list of ElevenLabs voices"""
+def get_elevenlabs_voices(search: str = None, 
+                         voice_type: str = None, 
+                         category: str = None,
+                         page_size: int = 50,
+                         next_page_token: str = None,
+                         sort: str = None,
+                         sort_direction: str = None) -> Dict[str, Any]:
+    """Get list of ElevenLabs voices with advanced filtering and pagination"""
     try:
         # Use the elevenlabs_service which has the API key configured
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(elevenlabs_service.get_voices())
+        result = loop.run_until_complete(elevenlabs_service.get_voices(
+            search=search,
+            voice_type=voice_type,
+            category=category,
+            page_size=page_size,
+            next_page_token=next_page_token,
+            sort=sort,
+            sort_direction=sort_direction
+        ))
         loop.close()
         
         if not result["success"]:
@@ -100,26 +114,118 @@ def get_elevenlabs_voices() -> Dict[str, Any]:
         voices = result.get("voices", [])
         print(f"DEBUG: Found {len(voices)} voices from ElevenLabs service")
         
-        # Format voices for frontend (ElevenLabs API format)
+        # Format voices for frontend with enhanced information
         formatted_voices = []
         for voice in voices:
-            formatted_voices.append({
-                "id": voice.get("voice_id"),
+            labels = voice.get("labels", {})
+            
+            # Extract voice characteristics
+            voice_data = {
+                "voice_id": voice.get("voice_id"),
                 "name": voice.get("name"),
-                "gender": voice.get("labels", {}).get("gender", "unknown"),
-                "age": voice.get("labels", {}).get("age", "unknown"),
-                "accent": voice.get("labels", {}).get("accent", "unknown"),
-                "description": voice.get("labels", {}).get("description", ""),
-                "use_case": voice.get("labels", {}).get("use case", ""),
+                "category": voice.get("category", "premade"),
+                "description": voice.get("description"),
                 "preview_url": voice.get("preview_url"),
-                "category": voice.get("category", "premade")
-            })
+                "available_for_tiers": voice.get("available_for_tiers", []),
+                "is_owner": voice.get("is_owner", False),
+                "is_legacy": voice.get("is_legacy", False),
+                "is_mixed": voice.get("is_mixed", False),
+                "created_at_unix": voice.get("created_at_unix"),
+                "favorited_at_unix": voice.get("favorited_at_unix"),
+                
+                # Voice characteristics from labels
+                "gender": labels.get("gender", "unknown"),
+                "age": labels.get("age", "unknown"),
+                "accent": labels.get("accent", "unknown"),
+                "use_case": labels.get("use case", ""),
+                "descriptive": labels.get("descriptive", ""),
+                
+                # Voice settings if available
+                "settings": voice.get("settings"),
+                
+                # Sharing information if available
+                "sharing": voice.get("sharing"),
+                
+                # Sample information
+                "samples": voice.get("samples", []),
+                
+                # Fine tuning information
+                "fine_tuning": voice.get("fine_tuning"),
+                
+                # Verification status
+                "voice_verification": voice.get("voice_verification"),
+                
+                # High quality model IDs
+                "high_quality_base_model_ids": voice.get("high_quality_base_model_ids", []),
+                
+                # Verified languages
+                "verified_languages": voice.get("verified_languages", [])
+            }
+            
+            formatted_voices.append(voice_data)
         
         return {
             "success": True,
             "voices": formatted_voices,
-            "total": len(formatted_voices)
+            "total_count": result.get("total_count", len(formatted_voices)),
+            "has_more": result.get("has_more", False),
+            "next_page_token": result.get("next_page_token")
         }
     except Exception as e:
         print(f"DEBUG: Exception occurred: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+def get_voice_details(voice_id: str) -> Dict[str, Any]:
+    """Get detailed information about a specific voice"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(elevenlabs_service.get_voice_details(voice_id))
+        loop.close()
+        
+        if not result["success"]:
+            print(f"DEBUG: ElevenLabs voice details error: {result.get('error')}")
+            return result
+        
+        voice = result.get("voice", {})
+        print(f"DEBUG: Retrieved details for voice: {voice.get('name', 'Unknown')}")
+        
+        return {
+            "success": True,
+            "voice": voice
+        }
+    except Exception as e:
+        print(f"DEBUG: Exception occurred: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+def synthesize_elevenlabs_voice(text: str, voice_id: str, settings: dict = None) -> Dict[str, Any]:
+    """Convert text to speech using ElevenLabs"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(elevenlabs_service.synthesize_speech(text, voice_id, settings))
+        loop.close()
+        
+        if not result["success"]:
+            print(f"DEBUG: ElevenLabs synthesis error: {result.get('error')}")
+            return result
+        
+        # Convert audio data to base64 for JSON response
+        audio_data = result.get("audio_data")
+        if audio_data:
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            return {
+                "success": True,
+                "audio": {
+                    "content": audio_base64,
+                    "format": "mp3",
+                    "voice_id": voice_id,
+                    "text": text
+                }
+            }
+        else:
+            return {"success": False, "error": "No audio data received"}
+            
+    except Exception as e:
+        print(f"DEBUG: Exception occurred in synthesize_elevenlabs_voice: {str(e)}")
         return {"success": False, "error": str(e)}

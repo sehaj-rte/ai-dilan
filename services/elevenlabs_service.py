@@ -92,15 +92,91 @@ class ElevenLabsService:
                 "error": f"Failed to create agent: {str(e)}"
             }
     
-    async def get_voices(self) -> Dict[str, Any]:
+    async def get_voices(self, 
+                        search: Optional[str] = None,
+                        voice_type: Optional[str] = None,
+                        category: Optional[str] = None,
+                        page_size: int = 50,
+                        next_page_token: Optional[str] = None,
+                        sort: Optional[str] = None,
+                        sort_direction: Optional[str] = None) -> Dict[str, Any]:
         """
-        Get available voices from ElevenLabs
+        Get available voices from ElevenLabs using v2 API with advanced filtering
+        
+        Args:
+            search: Search term to filter voices by name, description, labels, category
+            voice_type: Type filter ('personal', 'community', 'default', 'workspace', 'non-default')
+            category: Category filter ('premade', 'cloned', 'generated', 'professional')
+            page_size: Number of voices to return (max 100, default 50)
+            next_page_token: Token for pagination
+            sort: Sort field ('created_at_unix' or 'name')
+            sort_direction: Sort direction ('asc' or 'desc')
         
         Returns:
-            Dict containing list of available voices
+            Dict containing list of available voices with pagination info
         """
         try:
-            url = f"{self.base_url}/voices"
+            # Use v2 API endpoint for advanced features
+            url = "https://api.elevenlabs.io/v2/voices"
+            
+            # Build query parameters
+            params = {
+                "page_size": min(page_size, 100),  # Ensure we don't exceed API limit
+                "include_total_count": True
+            }
+            
+            if search:
+                params["search"] = search
+            if voice_type:
+                params["voice_type"] = voice_type
+            if category:
+                params["category"] = category
+            if next_page_token:
+                params["next_page_token"] = next_page_token
+            if sort:
+                params["sort"] = sort
+            if sort_direction:
+                params["sort_direction"] = sort_direction
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=self.headers, params=params)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "success": True,
+                        "voices": data.get("voices", []),
+                        "has_more": data.get("has_more", False),
+                        "total_count": data.get("total_count", 0),
+                        "next_page_token": data.get("next_page_token")
+                    }
+                else:
+                    logger.error(f"ElevenLabs voices API error: {response.status_code} - {response.text}")
+                    return {
+                        "success": False,
+                        "error": f"ElevenLabs API error: {response.status_code}",
+                        "details": response.text
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error fetching ElevenLabs voices: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Failed to fetch voices: {str(e)}"
+            }
+    
+    async def get_voice_details(self, voice_id: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific voice
+        
+        Args:
+            voice_id: ElevenLabs voice ID
+            
+        Returns:
+            Dict containing detailed voice information
+        """
+        try:
+            url = f"{self.base_url}/voices/{voice_id}"
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=self.headers)
@@ -109,20 +185,21 @@ class ElevenLabsService:
                     data = response.json()
                     return {
                         "success": True,
-                        "voices": data.get("voices", [])
+                        "voice": data
                     }
                 else:
-                    logger.error(f"ElevenLabs voices API error: {response.status_code} - {response.text}")
+                    logger.error(f"ElevenLabs voice details API error: {response.status_code} - {response.text}")
                     return {
                         "success": False,
-                        "error": f"ElevenLabs API error: {response.status_code}"
+                        "error": f"ElevenLabs API error: {response.status_code}",
+                        "details": response.text
                     }
                     
         except Exception as e:
-            logger.error(f"Error fetching ElevenLabs voices: {str(e)}")
+            logger.error(f"Error fetching voice details: {str(e)}")
             return {
                 "success": False,
-                "error": f"Failed to fetch voices: {str(e)}"
+                "error": f"Failed to fetch voice details: {str(e)}"
             }
     
     async def update_agent(self, agent_id: str, name: Optional[str] = None, 
@@ -505,6 +582,73 @@ class ElevenLabsService:
             return {
                 "success": False,
                 "error": str(e)
+            }
+    
+    async def synthesize_speech(self, text: str, voice_id: str, settings: dict = None) -> Dict[str, Any]:
+        """
+        Synthesize speech using ElevenLabs TTS API
+        
+        Args:
+            text: Text to convert to speech
+            voice_id: ElevenLabs voice ID
+            settings: Voice settings (stability, similarity_boost, style, use_speaker_boost)
+            
+        Returns:
+            Dict containing audio data or error
+        """
+        try:
+            url = f"{self.base_url}/text-to-speech/{voice_id}"
+            
+            # Default settings
+            voice_settings = {
+                "stability": 0.5,
+                "similarity_boost": 0.75,
+                "style": 0.0,
+                "use_speaker_boost": True
+            }
+            
+            # Update with provided settings
+            if settings:
+                voice_settings.update(settings)
+            
+            payload = {
+                "text": text,
+                "model_id": "eleven_monolingual_v1",
+                "voice_settings": voice_settings
+            }
+            
+            # Use different headers for TTS endpoint
+            tts_headers = {
+                "xi-api-key": self.api_key,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg"
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=tts_headers)
+                
+                if response.status_code == 200:
+                    # Return audio data as bytes
+                    audio_data = response.content
+                    logger.info(f"Successfully synthesized speech for voice: {voice_id}")
+                    return {
+                        "success": True,
+                        "audio_data": audio_data,
+                        "content_type": "audio/mpeg"
+                    }
+                else:
+                    logger.error(f"ElevenLabs TTS API error: {response.status_code} - {response.text}")
+                    return {
+                        "success": False,
+                        "error": f"ElevenLabs API error: {response.status_code}",
+                        "details": response.text
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error synthesizing speech: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Failed to synthesize speech: {str(e)}"
             }
 
 # Create a singleton instance
