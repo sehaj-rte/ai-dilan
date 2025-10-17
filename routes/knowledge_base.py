@@ -14,8 +14,8 @@ from controllers.knowledge_base_controller import (
 
 class YouTubeTranscribeRequest(BaseModel):
     youtube_url: str
-    folder_id: str = None
-    custom_name: str = None
+    folder_id: Optional[str] = None
+    custom_name: Optional[str] = None
 
 class RenameFolderRequest(BaseModel):
     old_name: str
@@ -26,27 +26,35 @@ class MoveFileRequest(BaseModel):
 
 class WebScrapingRequest(BaseModel):
     url: str
-    folder_id: str = None
-    custom_name: str = None
+    folder_id: Optional[str] = None
+    custom_name: Optional[str] = None
 
 class WebPreviewRequest(BaseModel):
     url: str
+
+class CreateFolderRequest(BaseModel):
+    name: str
+    agent_id: Optional[str] = None
+
+class UpdateFolderRequest(BaseModel):
+    name: str
 
 router = APIRouter()
 
 @router.post("/upload", response_model=dict)
 async def upload_file(
     file: UploadFile = File(...), 
-    folder_id: str = Form(None),
+    agent_id: Optional[str] = Form(None),  # Agent isolation
+    folder_id: Optional[str] = Form(None),
     folder: str = Form("Uncategorized"),  # Keep for backward compatibility
-    custom_name: str = Form(None),
+    custom_name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
 ):
     """Upload file to knowledge base"""
     user_id = current_user_id
     
-    result = await upload_file_controller(file, db, user_id, folder_id, folder, custom_name)
+    result = await upload_file_controller(file, db, user_id, agent_id, folder_id, folder, custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -58,6 +66,7 @@ async def upload_file(
 
 @router.get("/files", response_model=dict)
 def get_files(
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
     folder_id: Optional[str] = Query(None, description="Filter by folder ID"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -71,6 +80,7 @@ def get_files(
     file_service = FileService(db)
     result = file_service.get_files(
         user_id=current_user_id,
+        agent_id=agent_id,
         folder_id=folder_id,
         page=page,
         limit=limit,
@@ -273,92 +283,8 @@ async def transcribe_youtube(
 
 # Folder Management Endpoints
 
-@router.get("/folders", response_model=dict)
-def get_folders(
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_required)
-):
-    """Get all folders with file counts"""
-    from services.file_service import FileService
-    
-    user_id = current_user_id
-    
-    file_service = FileService(db)
-    result = file_service.get_folders(user_id)
-    
-    if not result["success"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["error"]
-        )
-    
-    return result
 
-@router.post("/folders", response_model=dict)
-def create_folder(
-    folder_name: str,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_required)
-):
-    """Create a new folder"""
-    from services.file_service import FileService
-    
-    user_id = current_user_id
-    
-    file_service = FileService(db)
-    result = file_service.create_folder(folder_name, user_id)
-    
-    if not result["success"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["error"]
-        )
-    
-    return result
 
-@router.put("/folders/rename", response_model=dict)
-def rename_folder(
-    request: RenameFolderRequest,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_required)
-):
-    """Rename a folder"""
-    from services.file_service import FileService
-    
-    user_id = current_user_id
-    
-    file_service = FileService(db)
-    result = file_service.rename_folder(request.old_name, request.new_name, user_id)
-    
-    if not result["success"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["error"]
-        )
-    
-    return result
-
-@router.delete("/folders/{folder_id}", response_model=dict)
-def delete_folder(
-    folder_id: str,
-    db: Session = Depends(get_db),
-    current_user_id: str = Depends(get_current_user_required)
-):
-    """Delete a folder (moves all files to Uncategorized)"""
-    from services.file_service import FileService
-    
-    user_id = current_user_id
-    
-    file_service = FileService(db)
-    result = file_service.delete_folder(folder_id, user_id)
-    
-    if not result["success"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["error"]
-        )
-    
-    return result
 
 @router.put("/files/{file_id}/move", response_model=dict)
 def move_file(file_id: str, request: MoveFileRequest, db: Session = Depends(get_db)):
@@ -411,6 +337,129 @@ async def get_website_preview(request: WebPreviewRequest):
     from controllers.knowledge_base_controller import get_website_preview
     
     result = await get_website_preview(request.url)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+
+# Folder Management Endpoints
+
+@router.post("/folders", response_model=dict)
+def create_folder(
+    request: CreateFolderRequest,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Create a new folder with agent isolation"""
+    from services.folder_service import FolderService
+    
+    folder_service = FolderService(db)
+    result = folder_service.create_folder(
+        name=request.name,
+        user_id=current_user_id,
+        agent_id=request.agent_id
+    )
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.get("/folders", response_model=dict)
+def get_folders(
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Get folders with agent isolation"""
+    from services.folder_service import FolderService
+    
+    folder_service = FolderService(db)
+    result = folder_service.get_folders(
+        user_id=current_user_id,
+        agent_id=agent_id
+    )
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.get("/folders/{folder_id}", response_model=dict)
+def get_folder_by_id(
+    folder_id: str,
+    agent_id: Optional[str] = Query(None, description="Agent ID for access control"),
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Get folder by ID with agent isolation"""
+    from services.folder_service import FolderService
+    
+    folder_service = FolderService(db)
+    result = folder_service.get_folder_by_id(folder_id, agent_id)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.put("/folders/{folder_id}", response_model=dict)
+def update_folder(
+    folder_id: str,
+    request: UpdateFolderRequest,
+    agent_id: Optional[str] = Query(None, description="Agent ID for access control"),
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Update folder name with agent isolation"""
+    from services.folder_service import FolderService
+    
+    folder_service = FolderService(db)
+    result = folder_service.update_folder(
+        folder_id=folder_id,
+        name=request.name,
+        user_id=current_user_id,
+        agent_id=agent_id
+    )
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["error"]
+        )
+    
+    return result
+
+@router.delete("/folders/{folder_id}", response_model=dict)
+def delete_folder(
+    folder_id: str,
+    agent_id: Optional[str] = Query(None, description="Agent ID for access control"),
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Delete folder with agent isolation"""
+    from services.folder_service import FolderService
+    
+    folder_service = FolderService(db)
+    result = folder_service.delete_folder(
+        folder_id=folder_id,
+        user_id=current_user_id,
+        agent_id=agent_id
+    )
     
     if not result["success"]:
         raise HTTPException(

@@ -8,6 +8,7 @@ from services.aws_s3_service import s3_service
 from services.expert_processing_progress_service import ExpertProcessingProgressService
 from services.youtube_service import youtube_service
 from services.web_scraper_service import web_scraper_service
+from services.queue_service import QueueService
 from models.file_db import FileDB
 from sqlalchemy.orm import Session
 import logging
@@ -18,7 +19,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
-async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+async def upload_file(file: UploadFile, db: Session, user_id: str = None, agent_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
     """Upload file to knowledge base"""
     try:
         # Use custom name if provided, otherwise use original filename
@@ -82,6 +83,7 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder
             content_type=file.content_type,
             file_size=len(file_content),
             user_id=user_id,
+            agent_id=agent_id,
             extraction_result=extraction_result if extraction_result and extraction_result.get("success") else None,
             folder_id=folder_id,
             folder=folder
@@ -96,15 +98,16 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder
         file_id = upload_result["id"]
         logger.info(f"File uploaded successfully with ID: {file_id}")
         
-        # Process document for knowledge base (temporarily disabled)
-        processing_result = {"success": True, "message": "Processing temporarily disabled"}
-        # processing_result = await process_document_for_knowledge_base(
-        #     file_content=file_content,
-        #     content_type=file.content_type,
-        #     filename=file.filename,
-        #     file_id=file_id,
-        #     user_id=user_id
-        # )
+        # Queue document processing for knowledge base with agent isolation
+        processing_result = await queue_document_processing(
+            file_id=file_id,
+            file_content=file_content,
+            content_type=file.content_type,
+            filename=file.filename,
+            user_id=user_id,
+            agent_id=agent_id,
+            db=db
+        )
         
         # Return combined result
         return {
@@ -120,11 +123,11 @@ async def upload_file(file: UploadFile, db: Session, user_id: str = None, folder
         logger.error(f"Upload failed with exception: {str(e)}")
         return {"success": False, "error": f"Upload failed: {str(e)}"}
 
-def get_files(db: Session, user_id: str = None) -> Dict[str, Any]:
+def get_files(db: Session, user_id: str = None, agent_id: str = None) -> Dict[str, Any]:
     """Get all uploaded files"""
     try:
         file_service = FileService(db)
-        return file_service.get_files(user_id=user_id)
+        return file_service.get_files(user_id=user_id, agent_id=agent_id)
         
     except Exception as e:
         return {"success": False, "error": f"Failed to retrieve files: {str(e)}"}
@@ -162,15 +165,117 @@ def get_file_stats(db: Session, user_id: str = None) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": f"Failed to get statistics: {str(e)}"}
 
+async def queue_document_processing(
+    file_id: str,
+    file_content: bytes,
+    content_type: str,
+    filename: str,
+    user_id: str = None,
+    agent_id: str = None,
+    db: Session = None
+) -> Dict[str, Any]:
+    """
+    Queue document processing for knowledge base with agent isolation
+    
+    Args:
+        file_id: Unique file identifier
+        file_content: Raw file content (for immediate text extraction)
+        content_type: MIME type of the file
+        filename: Original filename
+        user_id: User who uploaded the file
+        agent_id: Agent ID for isolation
+        db: Database session
+        
+    Returns:
+        Dict containing queue status and immediate processing results
+    """
+    try:
+        logger.info(f"Queueing document processing for {filename} (file_id: {file_id}, agent_id: {agent_id})")
+        
+        # Step 1: Immediate text extraction for quick preview
+        extraction_result = document_processor.extract_text(
+            file_content=file_content,
+            content_type=content_type,
+            filename=filename
+        )
+        
+        # Update file record with extracted text (for immediate search/preview)
+        if extraction_result.get("success") and db:
+            try:
+                file_record = db.query(FileDB).filter(FileDB.id == file_id).first()
+                if file_record:
+                    file_record.extracted_text = extraction_result.get("text", "")[:10000]  # Store first 10k chars
+                    file_record.word_count = extraction_result.get("word_count", 0)
+                    file_record.processing_status = "queued"
+                    db.commit()
+                    logger.info(f"Updated file record with extracted text preview for {file_id}")
+            except Exception as e:
+                logger.error(f"Failed to update file record: {str(e)}")
+                db.rollback()
+        
+        # Step 2: Queue background processing for embedding and indexing
+        if agent_id and db:
+            queue_service = QueueService(db)
+            
+            task_data = {
+                "file_id": file_id,
+                "filename": filename,
+                "content_type": content_type,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "task_type": "knowledge_base_processing",
+                "extracted_text": extraction_result.get("text", "") if extraction_result.get("success") else None
+            }
+            
+            # Queue the processing task
+            queue_task = queue_service.enqueue_task(
+                expert_id=agent_id,  # Using agent_id as expert_id for compatibility
+                agent_id=agent_id,
+                task_data=task_data,
+                task_type="knowledge_base_processing",
+                priority=1  # High priority for knowledge base processing
+            )
+            
+            logger.info(f"Queued knowledge base processing task {queue_task.id} for file {file_id}")
+            
+            return {
+                "success": True,
+                "message": "File queued for processing",
+                "task_id": queue_task.id,
+                "status": "queued",
+                "text_extracted": extraction_result.get("success", False),
+                "word_count": extraction_result.get("word_count", 0) if extraction_result.get("success") else 0
+            }
+        else:
+            # Fallback: immediate processing if no agent_id or db
+            logger.warning(f"No agent_id or db provided, falling back to immediate processing for {file_id}")
+            return await process_document_for_knowledge_base(
+                file_content=file_content,
+                content_type=content_type,
+                filename=filename,
+                file_id=file_id,
+                user_id=user_id,
+                agent_id=agent_id
+            )
+            
+    except Exception as e:
+        logger.error(f"Failed to queue document processing for {filename}: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Failed to queue processing: {str(e)}",
+            "status": "failed"
+        }
+
 async def process_document_for_knowledge_base(
     file_content: bytes, 
     content_type: str, 
     filename: str, 
     file_id: str, 
-    user_id: str = None
+    user_id: str = None,
+    agent_id: str = None
 ) -> Dict[str, Any]:
     """
-    Process uploaded document for knowledge base integration
+    Process uploaded document for knowledge base integration with agent isolation
     
     Args:
         file_content: Raw file content
@@ -178,12 +283,13 @@ async def process_document_for_knowledge_base(
         filename: Original filename
         file_id: Unique file identifier
         user_id: User who uploaded the file
+        agent_id: Agent ID for isolation
         
     Returns:
         Dict containing processing status and results
     """
     try:
-        logger.info(f"Starting document processing for {filename} (file_id: {file_id})")
+        logger.info(f"Starting document processing for {filename} (file_id: {file_id}, agent_id: {agent_id})")
         
         # Step 1: Extract text from file
         extraction_result = document_processor.extract_text(
@@ -205,12 +311,13 @@ async def process_document_for_knowledge_base(
         
         logger.info(f"Extracted {word_count} words from {filename}")
         
-        # Step 2: Process document (chunk and embed)
+        # Step 2: Process document (chunk and embed) with agent isolation
         processing_result = embedding_service.process_document(
             text=extracted_text,
             file_id=file_id,
             filename=filename,
-            user_id=user_id
+            user_id=user_id,
+            agent_id=agent_id  # Pass agent_id for isolation
         )
         
         if not processing_result["success"]:
@@ -221,41 +328,46 @@ async def process_document_for_knowledge_base(
                 "stage": "document_processing"
             }
         
-        chunks = processing_result["chunks"]
-        total_chunks = processing_result["total_chunks"]
+        chunks_created = processing_result.get("chunks_created", 0)
+        logger.info(f"Created {chunks_created} chunks for {filename}")
         
-        logger.info(f"Created {total_chunks} chunks for {filename}")
+        # Step 3: Store embeddings in Pinecone with agent isolation
+        if chunks_created > 0:
+            pinecone_result = await pinecone_service.store_document_embeddings(
+                chunks_with_embeddings=processing_result["chunks"],
+                file_id=file_id,
+                filename=filename,
+                user_id=user_id,
+                agent_id=agent_id  # Pass agent_id for namespace isolation
+            )
+            
+            if not pinecone_result["success"]:
+                logger.error(f"Pinecone storage failed for {filename}: {pinecone_result['error']}")
+                return {
+                    "success": False,
+                    "error": f"Vector storage failed: {pinecone_result['error']}",
+                    "stage": "vector_storage"
+                }
+            
+            vectors_stored = pinecone_result.get("vectors_stored", 0)
+            logger.info(f"Stored {vectors_stored} vectors in Pinecone for {filename}")
         
-        # Step 3: Store in Pinecone
-        storage_result = await pinecone_service.store_document_chunks(
-            chunks=chunks,
-            user_id=user_id
-        )
-        
-        if not storage_result["success"]:
-            logger.error(f"Pinecone storage failed for {filename}: {storage_result['error']}")
-            return {
-                "success": False,
-                "error": f"Knowledge base storage failed: {storage_result['error']}",
-                "stage": "pinecone_storage"
-            }
-        
-        logger.info(f"Successfully processed and stored {filename} in knowledge base")
+        # Step 4: Automatically attach knowledge base to agent for chat
+        if agent_id:
+            attachment_result = await attach_knowledge_base_to_agent(
+                agent_id=agent_id,
+                user_id=user_id
+            )
+            logger.info(f"Knowledge base attachment result for agent {agent_id}: {attachment_result}")
         
         return {
             "success": True,
-            "text_extraction": {
-                "word_count": word_count,
-                "content_type": content_type
-            },
-            "document_processing": {
-                "total_chunks": total_chunks,
-                "processed_word_count": processing_result["processed_word_count"]
-            },
-            "knowledge_base_storage": {
-                "chunks_stored": storage_result["chunks_stored"],
-                "namespace": storage_result["namespace"]
-            }
+            "message": f"Document processed successfully",
+            "word_count": word_count,
+            "chunks_created": chunks_created,
+            "vectors_stored": vectors_stored if chunks_created > 0 else 0,
+            "agent_attached": bool(agent_id),
+            "stage": "completed"
         }
         
     except Exception as e:
@@ -1142,3 +1254,85 @@ async def get_website_preview(url: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Website preview failed: {str(e)}")
         return {"success": False, "error": f"Website preview failed: {str(e)}"}
+
+async def attach_knowledge_base_to_agent(agent_id: str, user_id: str = None) -> Dict[str, Any]:
+    """
+    Automatically attach knowledge base search capability to an agent
+    
+    Args:
+        agent_id: Expert ID (our database ID) to attach knowledge base to
+        user_id: User ID for context
+        
+    Returns:
+        Dict containing attachment status
+    """
+    try:
+        logger.info(f"Attaching knowledge base to expert {agent_id}")
+        
+        # First, get the expert from database to get the ElevenLabs agent ID
+        from services.expert_service import ExpertService
+        from config.database import SessionLocal
+        
+        db = SessionLocal()
+        try:
+            expert_service = ExpertService(db)
+            expert_result = expert_service.get_expert(agent_id)
+            
+            if not expert_result.get("success"):
+                logger.error(f"Expert {agent_id} not found: {expert_result.get('error')}")
+                return {
+                    "success": False,
+                    "error": f"Expert not found: {expert_result.get('error')}",
+                    "agent_id": agent_id,
+                    "search_enabled": False
+                }
+            
+            expert_data = expert_result["expert"]
+            elevenlabs_agent_id = expert_data.get("elevenlabs_agent_id")
+            
+            if not elevenlabs_agent_id:
+                logger.warning(f"Expert {agent_id} has no ElevenLabs agent ID")
+                return {
+                    "success": False,
+                    "error": "Expert has no ElevenLabs agent configured",
+                    "agent_id": agent_id,
+                    "search_enabled": False
+                }
+            
+            logger.info(f"Found ElevenLabs agent ID: {elevenlabs_agent_id} for expert {agent_id}")
+            
+            # Use the existing pinecone service method to add search tool
+            attachment_result = await pinecone_service.add_search_tool_to_agent(
+                agent_id=elevenlabs_agent_id,  # Use ElevenLabs agent ID
+                user_id=user_id
+            )
+            
+            if attachment_result.get("success"):
+                logger.info(f"Successfully attached knowledge base to expert {agent_id} (ElevenLabs agent: {elevenlabs_agent_id})")
+                return {
+                    "success": True,
+                    "message": "Knowledge base attached to agent for chat",
+                    "agent_id": agent_id,
+                    "elevenlabs_agent_id": elevenlabs_agent_id,
+                    "search_enabled": True
+                }
+            else:
+                logger.warning(f"Failed to attach knowledge base to expert {agent_id}: {attachment_result.get('error', 'Unknown error')}")
+                return {
+                    "success": False,
+                    "error": attachment_result.get("error", "Failed to attach knowledge base"),
+                    "agent_id": agent_id,
+                    "elevenlabs_agent_id": elevenlabs_agent_id,
+                    "search_enabled": False
+                }
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"Error attaching knowledge base to expert {agent_id}: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Attachment failed: {str(e)}",
+            "agent_id": agent_id,
+            "search_enabled": False
+        }

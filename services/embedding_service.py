@@ -33,15 +33,16 @@ class EmbeddingService:
         self.rate_limit_delay = 0.05  # Reduced delay
         self.max_chunks_per_document = 500  # Reduced limit for faster processing
     
-    def process_document(self, text: str, file_id: str, filename: str, user_id: str = None, progress_callback=None) -> Dict[str, Any]:
+    def process_document(self, text: str, file_id: str, filename: str, user_id: str = None, agent_id: str = None, progress_callback=None) -> Dict[str, Any]:
         """
-        Process a document: chunk text and generate embeddings
+        Process a document: chunk text and generate embeddings with agent isolation
         
         Args:
             text: Extracted text content
             file_id: Unique file identifier
             filename: Original filename
             user_id: User who uploaded the file
+            agent_id: Agent ID for isolation
             progress_callback: Optional callback function(batch_num, total_batches, chunks_completed, total_chunks)
             
         Returns:
@@ -123,6 +124,7 @@ class EmbeddingService:
                                 "chunk_index": chunk_index,
                                 "total_chunks": len(chunks),
                                 "user_id": user_id,
+                                "agent_id": agent_id,  # Include agent_id for isolation
                                 "word_count": len(chunk_text.split()),
                                 "text": chunk_text,  # Include text in metadata for retrieval
                                 "created_at": datetime.utcnow().isoformat()
@@ -187,12 +189,10 @@ class EmbeddingService:
             return {
                 "success": True,
                 "chunks": processed_chunks,
+                "chunks_created": len(processed_chunks),
                 "total_chunks": len(processed_chunks),
-                "original_chunks": original_chunks,
-                "chunks_truncated": original_chunks > len(processed_chunks),
-                "original_word_count": len(text.split()),
-                "processed_word_count": sum(len(chunk["text"].split()) for chunk in processed_chunks),
-                "processing_time": total_time
+                "agent_id": agent_id,
+                "processed_word_count": sum(len(chunk["text"].split()) for chunk in processed_chunks)
             }
             
         except Exception as e:

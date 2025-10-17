@@ -16,7 +16,8 @@ class FileDB(Base):
     s3_url = Column(Text, nullable=False)
     s3_key = Column(String(500), nullable=False)
     user_id = Column(UUID(as_uuid=True), nullable=True)
-    project_id = Column(String, ForeignKey('experts.id'), nullable=True)  # Project isolation
+    agent_id = Column(String, ForeignKey('experts.id'), nullable=True)  # Agent isolation
+    project_id = Column(String, ForeignKey('experts.id'), nullable=True)  # Deprecated: use agent_id instead
     content = Column(LargeBinary, nullable=True)  # Fallback storage when S3 not configured
     
     # Enhanced metadata fields
@@ -55,7 +56,8 @@ class FileDB(Base):
             "url": self.s3_url,
             "s3_key": self.s3_key,
             "user_id": str(self.user_id) if self.user_id else None,
-            "project_id": self.project_id,
+            "agent_id": self.agent_id,
+            "project_id": self.project_id,  # Keep for backward compatibility
             
             # Enhanced metadata
             "description": self.description,

@@ -168,15 +168,18 @@ async def search_user_knowledge_webhook(
         print(f"\U0001f916 ElevenLabs Webhook: Searching agent knowledge base for agent {agent_id}")
         print(f"🔍 Query: '{search_request.query}' (top_k: {search_request.top_k or 5})")
         
-        # Use the expert's pinecone_index_name as the namespace (ElevenLabs agent_id used during storage)
-        search_namespace = agent_id  # This should be the ElevenLabs agent_id
+        # Use agent isolation: convert ElevenLabs agent_id to our expert_id for namespace
+        expert_id = None
         if expert_result["success"]:
-            search_namespace = expert.get('pinecone_index_name') or agent_id
+            expert_id = expert['id']  # Our database expert ID
         
-        print(f"🎯 Searching in namespace: {search_namespace}")
+        # Create namespace based on our expert ID (matches storage format)
+        search_namespace = f"agent_{expert_id}" if expert_id else f"agent_{agent_id}"
+        
+        print(f"🎯 Searching in namespace: {search_namespace} (expert_id: {expert_id})")
         result = await pinecone_service.search_user_knowledge(
             query=search_request.query,
-            agent_id=search_namespace,  # Use the correct namespace for search
+            agent_id=expert_id,  # Use our expert ID for search
             top_k=search_request.top_k or 5
         )
         logger.info(f"\U0001f4c8 Pinecone search result: success={result.get('success')}, results_count={len(result.get('results', []))}")
@@ -255,3 +258,59 @@ async def search_user_knowledge_health():
         "current_agent_namespaces": ["agent_id_based_namespaces"],
         "pinecone_index": os.getenv("PINECONE_USER_KB_INDEX", "user-knowledge-base")
     }
+
+@router.get("/test-search/{expert_id}")
+async def test_agent_search(
+    expert_id: str,
+    query: str = Query(..., description="Search query to test"),
+    db: Session = Depends(get_db)
+):
+    """
+    Test endpoint to verify agent's knowledge base search is working
+    
+    Args:
+        expert_id: Our database expert ID
+        query: Search query to test
+        db: Database session
+        
+    Returns:
+        Search results from agent's knowledge base
+    """
+    try:
+        logger.info(f"🧪 Testing search for expert {expert_id} with query: '{query}'")
+        
+        # Search the agent's knowledge base directly
+        result = await pinecone_service.search_user_knowledge(
+            query=query,
+            agent_id=expert_id,
+            top_k=5
+        )
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "expert_id": expert_id,
+                "query": query,
+                "namespace": f"agent_{expert_id}",
+                "results_count": len(result["results"]),
+                "results": result["results"],
+                "message": "Search completed successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "expert_id": expert_id,
+                "query": query,
+                "error": result.get("error"),
+                "message": "Search failed"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in test search: {str(e)}")
+        return {
+            "success": False,
+            "expert_id": expert_id,
+            "query": query,
+            "error": str(e),
+            "message": "Test search failed"
+        }

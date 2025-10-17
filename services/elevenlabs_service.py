@@ -390,6 +390,10 @@ class ElevenLabsService:
                 }
             }
             
+            # Debug: Log the payload being sent
+            logger.info(f"Creating tool with payload: {tool_payload}")
+            logger.info(f"Headers: {self.headers}")
+            
             # Create tool using the correct ElevenLabs API endpoint
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -397,6 +401,9 @@ class ElevenLabsService:
                     headers=self.headers,
                     json=tool_payload
                 )
+            
+            logger.info(f"Tool creation response: {response.status_code}")
+            logger.info(f"Response body: {response.text}")
             
             if response.status_code in [200, 201]:
                 result = response.json()
@@ -507,34 +514,92 @@ class ElevenLabsService:
             Dict containing success status
         """
         try:
-            # Try different possible endpoints for adding tools to agents
+            logger.info(f"🔧 Attempting to attach tool {tool_id} to agent {agent_id}")
+            
+            # First verify the agent exists
+            async with httpx.AsyncClient() as client:
+                agent_check = await client.get(
+                    f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}",
+                    headers=self.headers
+                )
+                logger.info(f"Agent verification: {agent_check.status_code} - {agent_check.text[:200]}")
+                
+                if agent_check.status_code == 404:
+                    return {
+                        "success": False,
+                        "error": f"Agent {agent_id} not found in ElevenLabs workspace"
+                    }
+            
+            # Try different possible endpoints and methods for adding tools to agents
             endpoints_to_try = [
-                f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}/tools",
-                f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}/add-tool",
-                f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}/tools/{tool_id}",
+                {
+                    "method": "POST",
+                    "url": f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}/tools",
+                    "payload": {"tool_id": tool_id}
+                },
+                {
+                    "method": "PUT",
+                    "url": f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}/tools",
+                    "payload": {"tool_id": tool_id}
+                },
+                {
+                    "method": "PATCH",
+                    "url": f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}",
+                    "payload": {"tool_ids": [tool_id]}
+                },
+                {
+                    "method": "PATCH",
+                    "url": f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}",
+                    "payload": {"tools": [{"id": tool_id}]}
+                },
+                {
+                    "method": "PATCH",
+                    "url": f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}",
+                    "payload": {"conversation_config": {"tool_ids": [tool_id]}}
+                },
+                {
+                    "method": "PUT",
+                    "url": f"https://api.elevenlabs.io/v1/convai/agents/{agent_id}/tools/{tool_id}",
+                    "payload": {}
+                }
             ]
             
-            for endpoint in endpoints_to_try:
+            for i, endpoint_config in enumerate(endpoints_to_try):
+                logger.info(f"🔄 Trying {endpoint_config['method']} {i+1}/{len(endpoints_to_try)}: {endpoint_config['url']}")
+                logger.info(f"📦 Payload: {endpoint_config['payload']}")
+                
                 async with httpx.AsyncClient() as client:
-                    # Try POST with tool_id in body
-                    response = await client.post(
-                        endpoint,
-                        headers=self.headers,
-                        json={"tool_id": tool_id}
-                    )
+                    if endpoint_config["method"] == "POST":
+                        response = await client.post(
+                            endpoint_config["url"],
+                            headers=self.headers,
+                            json=endpoint_config["payload"]
+                        )
+                    elif endpoint_config["method"] == "PUT":
+                        response = await client.put(
+                            endpoint_config["url"],
+                            headers=self.headers,
+                            json=endpoint_config["payload"]
+                        )
+                    elif endpoint_config["method"] == "PATCH":
+                        response = await client.patch(
+                            endpoint_config["url"],
+                            headers=self.headers,
+                            json=endpoint_config["payload"]
+                        )
+                
+                logger.info(f"📊 Response {i+1}: {response.status_code} - {response.text[:300]}")
                 
                 if response.status_code in [200, 201]:
-                    logger.info(f"Successfully added tool {tool_id} to agent {agent_id} using endpoint: {endpoint}")
+                    logger.info(f"✅ Successfully added tool {tool_id} to agent {agent_id}")
                     return {
                         "success": True,
                         "message": "Tool added to agent successfully",
-                        "endpoint_used": endpoint
+                        "endpoint_used": endpoint_config["url"]
                     }
-                else:
-                    logger.debug(f"Endpoint {endpoint} failed with {response.status_code}: {response.text}")
             
             # If all endpoints fail, return the last error
-            logger.error(f"All endpoints failed to add tool {tool_id} to agent {agent_id}")
+            logger.error(f"❌ All endpoints failed to add tool {tool_id} to agent {agent_id}")
             return {
                 "success": False,
                 "error": f"All API endpoints failed. Last response: {response.status_code} - {response.text}"

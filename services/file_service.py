@@ -13,7 +13,7 @@ class FileService:
     def __init__(self, db: Session):
         self.db = db
     
-    def upload_file(self, file_content: bytes, file_name: str, content_type: str, file_size: int, user_id: Optional[str] = None, extraction_result: Optional[Dict[str, Any]] = None, folder_id: Optional[str] = None, folder: str = "Uncategorized") -> Dict[str, Any]:
+    def upload_file(self, file_content: bytes, file_name: str, content_type: str, file_size: int, user_id: Optional[str] = None, agent_id: Optional[str] = None, extraction_result: Optional[Dict[str, Any]] = None, folder_id: Optional[str] = None, folder: str = "Uncategorized") -> Dict[str, Any]:
         """Upload file to S3 and save metadata to database"""
         try:
             print(f"\U0001f4c1 File Service: Starting upload for {file_name}, size: {file_size}")
@@ -67,18 +67,24 @@ class FileService:
                     logger.error(f"FileService: Invalid folder_id format: {folder_id}, error: {e}")
                     return {"success": False, "error": f"Invalid folder_id format: {folder_id}"}
             else:
-                # If no folder_id provided, try to find or create "Uncategorized" folder
-                uncategorized_folder = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized").first()
+                # If no folder_id provided, try to find or create "Uncategorized" folder for this agent
+                query = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized")
+                if agent_id:
+                    query = query.filter(FolderDB.agent_id == agent_id)
+                else:
+                    query = query.filter(FolderDB.agent_id.is_(None))
+                
+                uncategorized_folder = query.first()
                 if uncategorized_folder:
                     folder_uuid = uncategorized_folder.id
                     logger.info(f"FileService: Using existing Uncategorized folder: {folder_uuid}")
                 else:
-                    # Create Uncategorized folder if it doesn't exist
-                    uncategorized_folder = FolderDB(name="Uncategorized", user_id=user_uuid)
+                    # Create Uncategorized folder if it doesn't exist for this agent
+                    uncategorized_folder = FolderDB(name="Uncategorized", user_id=user_uuid, agent_id=agent_id)
                     self.db.add(uncategorized_folder)
                     self.db.flush()  # Get the ID without committing
                     folder_uuid = uncategorized_folder.id
-                    logger.info(f"FileService: Created new Uncategorized folder: {folder_uuid}")
+                    logger.info(f"FileService: Created new Uncategorized folder: {folder_uuid} for agent: {agent_id}")
             
             # Determine processing status based on extraction result
             # If extraction was successful, mark as completed
@@ -96,6 +102,8 @@ class FileService:
                 s3_url=s3_result["url"],
                 s3_key=s3_result["s3_key"],
                 user_id=user_uuid,
+                agent_id=agent_id,  # Agent isolation
+                project_id=agent_id,  # Keep for backward compatibility
                 content=file_content if store_content_in_db else None,  # Store content as fallback
                 
                 # Enhanced metadata
@@ -133,7 +141,7 @@ class FileService:
             self.db.rollback()
             return {"success": False, "error": f"Database error: {str(e)}"}
     
-    def get_files(self, user_id: Optional[str] = None, folder_id: Optional[str] = None, 
+    def get_files(self, user_id: Optional[str] = None, agent_id: Optional[str] = None, folder_id: Optional[str] = None, 
                   page: int = 1, limit: int = 10, search: Optional[str] = None) -> Dict[str, Any]:
         """Get files with pagination and filtering"""
         try:
@@ -145,6 +153,11 @@ class FileService:
             # Filter by user
             if user_id:
                 query = query.filter(FileDB.user_id == uuid.UUID(user_id))
+            
+            # Filter by agent (for agent isolation)
+            if agent_id:
+                query = query.filter(FileDB.agent_id == agent_id)
+                print(f"🤖 Filtering by agent_id: {agent_id}")
             
             # Filter by folder
             if folder_id:

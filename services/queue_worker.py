@@ -4,8 +4,9 @@ import threading
 from sqlalchemy.orm import Session
 from config.database import SessionLocal
 from services.queue_service import QueueService
-from controllers.knowledge_base_controller import process_expert_files
+from controllers.knowledge_base_controller import process_expert_files, process_document_for_knowledge_base
 from models.processing_queue import TaskStatus
+from models.file_db import FileDB
 import time
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,8 @@ class QueueWorker:
             # Process based on task type
             if task.task_type == "file_processing":
                 await self._process_file_task(task, db)
+            elif task.task_type == "knowledge_base_processing":
+                await self._process_knowledge_base_task(task, db)
             else:
                 logger.warning(f"Unknown task type: {task.task_type}")
                 queue_service.mark_task_failed(task.id, f"Unknown task type: {task.task_type}")
@@ -169,6 +172,78 @@ class QueueWorker:
             logger.error(f"Error in file processing task: {str(e)}")
             queue_service = QueueService(db)
             queue_service.mark_task_failed(task.id, str(e))
+
+    async def _process_knowledge_base_task(self, task, db: Session):
+        """Process knowledge base processing task"""
+        try:
+            queue_service = QueueService(db)
+            task_data = task.task_data
+            
+            file_id = task_data.get("file_id")
+            filename = task_data.get("filename")
+            content_type = task_data.get("content_type")
+            user_id = task_data.get("user_id")
+            agent_id = task_data.get("agent_id")
+            extracted_text = task_data.get("extracted_text")
+            
+            logger.info(f"Processing knowledge base task for file {file_id} (agent: {agent_id})")
+            
+            # Update file status to processing
+            file_record = db.query(FileDB).filter(FileDB.id == file_id).first()
+            if file_record:
+                file_record.processing_status = "processing"
+                db.commit()
+            
+            # Process document for knowledge base with agent isolation
+            if extracted_text:
+                # Use pre-extracted text for faster processing
+                processing_result = await process_document_for_knowledge_base(
+                    file_content=extracted_text.encode('utf-8'),
+                    content_type="text/plain",
+                    filename=filename,
+                    file_id=file_id,
+                    user_id=user_id,
+                    agent_id=agent_id
+                )
+            else:
+                # Need to re-extract text (fallback)
+                logger.warning(f"No pre-extracted text for {file_id}, will need file content")
+                processing_result = {"success": False, "error": "No extracted text available"}
+            
+            # Update file status based on result
+            if file_record:
+                if processing_result.get("success"):
+                    file_record.processing_status = "completed"
+                    file_record.word_count = processing_result.get("word_count", 0)
+                else:
+                    file_record.processing_status = "failed"
+                    file_record.processing_error = processing_result.get("error", "Unknown error")
+                db.commit()
+            
+            if processing_result.get("success"):
+                logger.info(f"Successfully processed knowledge base for file {file_id}")
+                queue_service.mark_task_completed(task.id)
+            else:
+                error_msg = processing_result.get("error", "Unknown processing error")
+                logger.error(f"Knowledge base processing failed for file {file_id}: {error_msg}")
+                queue_service.mark_task_failed(task.id, error_msg)
+                
+        except Exception as e:
+            logger.error(f"Error processing knowledge base task: {str(e)}")
+            queue_service = QueueService(db)
+            queue_service.mark_task_failed(task.id, str(e))
+            
+            # Update file status to failed
+            try:
+                file_id = task.task_data.get("file_id")
+                if file_id:
+                    file_record = db.query(FileDB).filter(FileDB.id == file_id).first()
+                    if file_record:
+                        file_record.processing_status = "failed"
+                        file_record.processing_error = str(e)
+                        db.commit()
+            except Exception as update_error:
+                logger.error(f"Failed to update file status: {str(update_error)}")
     
     def get_status(self) -> dict:
         """Get worker status"""
