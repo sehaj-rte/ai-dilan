@@ -279,10 +279,15 @@ class PineconeService:
             # Prepare vectors for Pinecone
             vectors_to_upsert = []
             for chunk in chunks_with_embeddings:
+                # Only add agent_id to metadata if it's not None
+                metadata = {**chunk["metadata"]}
+                if agent_id:
+                    metadata["agent_id"] = agent_id
+                
                 vectors_to_upsert.append({
                     "id": chunk["id"],
                     "values": chunk["embedding"],
-                    "metadata": {**chunk["metadata"], "agent_id": agent_id}
+                    "metadata": metadata
                 })
             
             # Process in batches to avoid 4MB limit

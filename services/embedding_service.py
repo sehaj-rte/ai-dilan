@@ -115,21 +115,29 @@ class EmbeddingService:
                     # Create chunk data for successfully embedded chunks
                     for i, (chunk_text, embedding) in enumerate(zip(batch_chunks, batch_embeddings)):
                         chunk_index = batch_indices[i]
+                        # Build metadata, only include non-null values
+                        metadata = {
+                            "file_id": file_id,
+                            "filename": filename,
+                            "chunk_index": chunk_index,
+                            "total_chunks": len(chunks),
+                            "word_count": len(chunk_text.split()),
+                            "text": chunk_text,  # Include text in metadata for retrieval
+                            "created_at": datetime.utcnow().isoformat()
+                        }
+                        
+                        # Only add user_id and agent_id if they're not None
+                        if user_id:
+                            metadata["user_id"] = user_id
+                        if agent_id:
+                            metadata["agent_id"] = agent_id
+                        
+                        chunk_id = f"{file_id}_chunk_{chunk_index}"
                         chunk_data = {
-                            "id": f"{file_id}_chunk_{chunk_index}",
+                            "id": chunk_id,
                             "text": chunk_text,
                             "embedding": embedding,
-                            "metadata": {
-                                "file_id": file_id,
-                                "filename": filename,
-                                "chunk_index": chunk_index,
-                                "total_chunks": len(chunks),
-                                "user_id": user_id,
-                                "agent_id": agent_id,  # Include agent_id for isolation
-                                "word_count": len(chunk_text.split()),
-                                "text": chunk_text,  # Include text in metadata for retrieval
-                                "created_at": datetime.utcnow().isoformat()
-                            }
+                            "metadata": metadata
                         }
                         processed_chunks.append(chunk_data)
                     
