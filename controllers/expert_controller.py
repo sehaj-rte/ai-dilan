@@ -29,11 +29,14 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
         system_prompt = expert_data.get("system_prompt") or "You are a helpful AI assistant."
         
         # Step 1: Create ElevenLabs agent first
+        # Use default first message if not provided
+        first_message = expert_data.get("first_message") or "Hi I'm your knowledgebase assistant how I can assist you with"
+        
         elevenlabs_result = await elevenlabs_service.create_agent(
             name=expert_data["name"],
             system_prompt=system_prompt,
             voice_id=expert_data["voice_id"],
-            first_message=expert_data.get("first_message"),  # Pass first_message if provided
+            first_message=first_message,
             tool_ids=None  # No tools initially
         )
         
@@ -47,30 +50,29 @@ async def create_expert_with_elevenlabs(db: Session, expert_data: Dict[str, Any]
         agent_id = elevenlabs_result["agent_id"]
         logger.info(f"Created ElevenLabs agent: {agent_id}")
         
-        # Step 2: Create knowledge base tool with the actual agent_id
+        # Step 2: Always create knowledge base tool for user documents (regardless of initial file selection)
         tool_id = None
-        if expert_data.get("selected_files"):
-            try:
-                logger.info(f"Creating knowledge base tool for agent: {agent_id}")
-                tool_result = await create_knowledge_base_tool(agent_id=agent_id)
-                if tool_result["success"]:
-                    tool_id = tool_result["tool_id"]
-                    logger.info(f"Created knowledge base tool: {tool_id}")
-                    
-                    # Step 3: Update agent to include the tool
-                    logger.info(f"Updating agent {agent_id} to include tool {tool_id}")
-                    update_result = await elevenlabs_service.update_agent(
-                        agent_id=agent_id,
-                        tool_ids=[tool_id]
-                    )
-                    if update_result["success"]:
-                        logger.info(f"Successfully attached tool {tool_id} to agent {agent_id}")
-                    else:
-                        logger.warning(f"Failed to attach tool to agent: {update_result.get('error')}")
+        try:
+            logger.info(f"Creating user-knowledge-base tool for agent: {agent_id}")
+            tool_result = await create_knowledge_base_tool(agent_id=agent_id)
+            if tool_result["success"]:
+                tool_id = tool_result["tool_id"]
+                logger.info(f"Created user-knowledge-base tool: {tool_id}")
+                
+                # Step 3: Update agent to include the tool
+                logger.info(f"Updating agent {agent_id} to include user-knowledge-base tool {tool_id}")
+                update_result = await elevenlabs_service.update_agent(
+                    agent_id=agent_id,
+                    tool_ids=[tool_id]
+                )
+                if update_result["success"]:
+                    logger.info(f"Successfully attached user-knowledge-base tool {tool_id} to agent {agent_id}")
                 else:
-                    logger.warning(f"Failed to create knowledge base tool: {tool_result.get('error')}")
-            except Exception as e:
-                logger.warning(f"Tool creation/attachment failed: {str(e)}")
+                    logger.warning(f"Failed to attach user-knowledge-base tool to agent: {update_result.get('error')}")
+            else:
+                logger.warning(f"Failed to create user-knowledge-base tool: {tool_result.get('error')}")
+        except Exception as e:
+            logger.warning(f"User-knowledge-base tool creation/attachment failed: {str(e)}")
         
         # Agent and tool creation completed above
         
@@ -483,7 +485,8 @@ def delete_expert(expert_id: str) -> Dict[str, Any]:
 
 async def create_knowledge_base_tool(agent_id: str) -> Dict[str, Any]:
     """
-    Create a knowledge base search tool for an agent
+    Create a user-knowledge-base search tool for an agent
+    This tool allows the agent to search through user's uploaded documents
     
     Args:
         agent_id: ElevenLabs agent ID to identify the expert
@@ -497,8 +500,8 @@ async def create_knowledge_base_tool(agent_id: str) -> Dict[str, Any]:
         
         # Create tool configuration with agent_id in the URL
         tool_config = {
-            "name": f"search_user_knowledge",
-            "description": "Search the user's uploaded documents and knowledge base for relevant information to answer questions. Use this when you need specific information that might be in the user's documents.",
+            "name": f"user_knowledge_base",
+            "description": "Search the user's uploaded documents and knowledge base for relevant information to answer questions. Use this when you need specific information that might be in the user's documents or files they have shared with you.",
             "webhook_url": f"{base_url}/tools/search-user-knowledge?agent_id={agent_id}",  # Include agent_id in URL
             "authentication": {
                 "type": "bearer",
@@ -570,3 +573,98 @@ async def update_knowledge_base_tool_url(tool_id: str, agent_id: str) -> Dict[st
     except Exception as e:
         logger.error(f"Error updating tool webhook URL: {str(e)}")
         return {"success": False, "error": str(e)}
+
+async def add_user_knowledge_tool_to_existing_agent(db: Session, expert_id: str, user_id: str = None) -> Dict[str, Any]:
+    """
+    Add user-knowledge-base tool to an existing agent that doesn't have it
+    
+    Args:
+        db: Database session
+        expert_id: Expert ID in our database
+        user_id: User ID for access control
+        
+    Returns:
+        Dict containing success status and tool details
+    """
+    try:
+        expert_service = ExpertService(db)
+        
+        # Get expert details
+        expert_result = expert_service.get_expert(expert_id)
+        if not expert_result["success"]:
+            return {"success": False, "error": "Expert not found"}
+        
+        expert_data = expert_result["expert"]
+        
+        # Check if expert belongs to user
+        if user_id and expert_data.get("user_id") != user_id:
+            return {"success": False, "error": "Expert not found or access denied"}
+        
+        elevenlabs_agent_id = expert_data.get("elevenlabs_agent_id")
+        if not elevenlabs_agent_id:
+            return {"success": False, "error": "Expert does not have an ElevenLabs agent ID"}
+        
+        # Check if expert already has a knowledge base tool
+        existing_tool_id = expert_data.get("knowledge_base_tool_id")
+        if existing_tool_id:
+            logger.info(f"Expert {expert_id} already has user-knowledge-base tool: {existing_tool_id}")
+            return {
+                "success": True,
+                "message": "Expert already has user-knowledge-base tool",
+                "tool_id": existing_tool_id,
+                "already_exists": True
+            }
+        
+        # Create the user-knowledge-base tool
+        logger.info(f"Adding user-knowledge-base tool to existing expert {expert_id} (agent: {elevenlabs_agent_id})")
+        tool_result = await create_knowledge_base_tool(agent_id=elevenlabs_agent_id)
+        
+        if not tool_result["success"]:
+            return {
+                "success": False,
+                "error": f"Failed to create user-knowledge-base tool: {tool_result.get('error')}"
+            }
+        
+        tool_id = tool_result["tool_id"]
+        logger.info(f"Created user-knowledge-base tool: {tool_id}")
+        
+        # Update agent to include the tool
+        logger.info(f"Updating agent {elevenlabs_agent_id} to include user-knowledge-base tool {tool_id}")
+        update_result = await elevenlabs_service.update_agent(
+            agent_id=elevenlabs_agent_id,
+            tool_ids=[tool_id]
+        )
+        
+        if not update_result["success"]:
+            logger.warning(f"Failed to attach user-knowledge-base tool to agent: {update_result.get('error')}")
+            return {
+                "success": False,
+                "error": f"Failed to attach tool to agent: {update_result.get('error')}"
+            }
+        
+        # Update expert in database with the new tool ID
+        update_data = {"knowledge_base_tool_id": tool_id}
+        db_update_result = expert_service.update_expert(expert_id, update_data)
+        
+        if not db_update_result["success"]:
+            logger.warning(f"Failed to update expert with tool ID: {db_update_result.get('error')}")
+            # Tool is created and attached, but database update failed
+            return {
+                "success": True,
+                "warning": "Tool created and attached but database update failed",
+                "tool_id": tool_id,
+                "db_error": db_update_result.get('error')
+            }
+        
+        logger.info(f"Successfully added user-knowledge-base tool {tool_id} to expert {expert_id}")
+        return {
+            "success": True,
+            "message": "User-knowledge-base tool added successfully",
+            "tool_id": tool_id,
+            "expert_id": expert_id,
+            "agent_id": elevenlabs_agent_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error adding user-knowledge-base tool to existing agent: {str(e)}")
+        return {"success": False, "error": f"Failed to add tool: {str(e)}"}

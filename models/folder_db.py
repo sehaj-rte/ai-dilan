@@ -9,7 +9,7 @@ class FolderDB(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     user_id = Column(UUID(as_uuid=True), nullable=True)  # User who owns the folder
-    agent_id = Column(String, ForeignKey('experts.id'), nullable=True)  # Agent isolation
+    agent_id = Column(String, nullable=True)  # Agent isolation (stores expert database ID)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     

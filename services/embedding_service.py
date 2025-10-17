@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import Dict, Any, List
-import openai
+from openai import OpenAI
 import re
 from datetime import datetime
 import time
@@ -17,9 +17,10 @@ class EmbeddingService:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         
         if self.openai_api_key:
-            openai.api_key = self.openai_api_key
+            self.openai_client = OpenAI(api_key=self.openai_api_key)
         else:
             logger.warning("OPENAI_API_KEY not found - embedding generation will fail")
+            self.openai_client = None
         
         # Embedding model configuration - matching Pinecone index dimensions
         self.embedding_model = "text-embedding-3-large"  # 3072 dimensions, matches Pinecone index
@@ -311,7 +312,13 @@ class EmbeddingService:
             api_start = time.time()
             
             # OpenAI supports batch embedding requests
-            response = openai.embeddings.create(
+            if not self.openai_client:
+                return {
+                    "success": False,
+                    "error": "OpenAI client not initialized"
+                }
+            
+            response = self.openai_client.embeddings.create(
                 model=self.embedding_model,
                 input=chunk_texts,
                 timeout=60  # Increased timeout for batches

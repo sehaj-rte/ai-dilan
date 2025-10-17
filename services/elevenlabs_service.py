@@ -375,6 +375,7 @@ class ElevenLabsService:
                         "method": "POST",
                         "request_body_schema": {
                             "type": "object",
+                            "description": "search for user query in tool",
                             "properties": {
                                 "query": {
                                     "type": "string",

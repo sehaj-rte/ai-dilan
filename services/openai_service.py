@@ -1,14 +1,14 @@
-import openai
+from openai import OpenAI
 from typing import List, Dict, Any
 from config.settings import OPENAI_API_KEY
 
-# Set OpenAI API key
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 def create_embedding(text: str):
     """Create embedding for text using OpenAI"""
     try:
-        response = openai.Embedding.create(
+        response = client.embeddings.create(
             model="text-embedding-ada-002",
             input=text
         )
@@ -32,7 +32,7 @@ def generate_response(expert_context: str, user_question: str, expert_name: str 
         - Keep responses concise but informative
         """
         
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -50,7 +50,7 @@ def generate_response(expert_context: str, user_question: str, expert_name: str 
 def transcribe_audio(audio_file):
     """Transcribe audio using OpenAI Whisper"""
     try:
-        response = openai.Audio.transcribe(
+        response = client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file
         )
@@ -62,7 +62,7 @@ def transcribe_audio(audio_file):
 def generate_speech(text: str, voice: str = "alloy"):
     """Generate speech from text using OpenAI TTS"""
     try:
-        response = openai.Audio.speech.create(
+        response = client.audio.speech.create(
             model="tts-1",
             voice=voice,
             input=text

@@ -14,6 +14,7 @@ from controllers.knowledge_base_controller import (
 
 class YouTubeTranscribeRequest(BaseModel):
     youtube_url: str
+    agent_id: Optional[str] = None  # Agent isolation
     folder_id: Optional[str] = None
     custom_name: Optional[str] = None
 
@@ -26,6 +27,7 @@ class MoveFileRequest(BaseModel):
 
 class WebScrapingRequest(BaseModel):
     url: str
+    agent_id: Optional[str] = None  # Agent isolation
     folder_id: Optional[str] = None
     custom_name: Optional[str] = None
 
@@ -239,9 +241,10 @@ def get_document_details(document_id: str, db: Session = Depends(get_db)):
 @router.post("/transcribe-audio", response_model=dict)
 async def transcribe_audio(
     file: UploadFile = File(...),
-    folder_id: str = Form(None),
+    agent_id: Optional[str] = Form(None),  # Agent isolation
+    folder_id: Optional[str] = Form(None),
     folder: str = Form("Uncategorized"),  # Keep for backward compatibility
-    custom_name: str = Form(None),
+    custom_name: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_required)
 ):
@@ -250,7 +253,7 @@ async def transcribe_audio(
     
     user_id = current_user_id
     
-    result = await transcribe_and_save_audio(file, db, user_id, folder_id, folder, custom_name)
+    result = await transcribe_and_save_audio(file, db, user_id, agent_id, folder_id, folder, custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -271,7 +274,7 @@ async def transcribe_youtube(
     
     user_id = current_user_id
     
-    result = await transcribe_youtube_video(request.youtube_url, db, user_id, request.folder_id, request.custom_name)
+    result = await transcribe_youtube_video(request.youtube_url, db, user_id, request.agent_id, request.folder_id, request.custom_name)
     
     if not result["success"]:
         raise HTTPException(
@@ -318,6 +321,7 @@ async def scrape_website(
         url=request.url,
         db=db,
         user_id=user_id,
+        agent_id=request.agent_id,
         folder_id=request.folder_id,
         custom_name=request.custom_name
     )

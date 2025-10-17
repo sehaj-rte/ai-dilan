@@ -3,7 +3,7 @@ import os
 import logging
 import asyncio
 from pinecone import Pinecone
-import openai
+from openai import OpenAI
 from services.elevenlabs_service import elevenlabs_service
 
 logger = logging.getLogger(__name__)
@@ -33,9 +33,11 @@ class PineconeService:
                 logger.warning(f"User KB index '{self.user_kb_index_name}' not available: {str(e)}")
                 logger.info("You'll need to create the user knowledge base index in Pinecone dashboard")
             
-            # Initialize OpenAI for embeddings
+            # Initialize OpenAI client for embeddings
             if self.openai_api_key:
-                openai.api_key = self.openai_api_key
+                self.openai_client = OpenAI(api_key=self.openai_api_key)
+            else:
+                self.openai_client = None
             
             logger.info("Pinecone service initialized successfully")
         except Exception as e:
@@ -359,15 +361,18 @@ class PineconeService:
                 }
             
             # Generate embedding for the query
-            import openai
-            openai.api_key = self.openai_api_key
+            if not self.openai_client:
+                return {
+                    "success": False,
+                    "error": "OpenAI client not initialized"
+                }
             
-            response = openai.Embedding.create(
+            response = self.openai_client.embeddings.create(
                 model="text-embedding-3-large",
                 input=query
             )
             
-            query_embedding = response['data'][0]['embedding']
+            query_embedding = response.data[0].embedding
             
             # Use agent namespace for isolation
             namespace = f"agent_{agent_id}" if agent_id else "default"

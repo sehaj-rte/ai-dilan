@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import UploadFile, HTTPException
 from services.file_service import FileService
 from services.document_processor import document_processor
@@ -677,7 +677,7 @@ async def process_expert_files(expert_id: str, agent_id: str, selected_files: li
             "processed_count": 0
         }
 
-async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str = None, agent_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
     """
     Transcribe audio using ElevenLabs Speech-to-Text API and save to knowledge base
     
@@ -841,6 +841,7 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
             content_type="text/plain",
             file_size=len(text_content),
             user_id=user_id,
+            agent_id=agent_id,
             extraction_result=extraction_result,
             folder_id=folder_id,
             folder=folder
@@ -850,8 +851,20 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
             logger.error(f"Failed to save transcription: {upload_result.get('error')}")
             return upload_result
         
-        logger.info(f"Transcription saved successfully with ID: {upload_result['id']}")
+        file_id = upload_result["id"]
+        logger.info(f"Transcription saved successfully with ID: {file_id}")
         print(f"✅ Transcription saved to knowledge base: {transcription_filename}")
+        
+        # Queue document processing for embeddings and indexing
+        processing_result = await queue_document_processing(
+            file_id=file_id,
+            file_content=text_content,
+            content_type="text/plain",
+            filename=transcription_filename,
+            user_id=user_id,
+            agent_id=agent_id,
+            db=db
+        )
         
         return {
             "success": True,
@@ -863,11 +876,12 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
                 "preview": transcribed_text[:200] + "..." if len(transcribed_text) > 200 else transcribed_text
             },
             "file": {
-                "id": upload_result["id"],
+                "id": file_id,
                 "name": transcription_filename,
                 "url": upload_result["url"],
                 "s3_key": upload_result["s3_key"]
-            }
+            },
+            "processing": processing_result
         }
         
     except httpx.TimeoutException:
@@ -877,7 +891,7 @@ async def transcribe_and_save_audio(file: UploadFile, db: Session, user_id: str 
         logger.error(f"Audio transcription failed: {str(e)}")
         return {"success": False, "error": f"Transcription failed: {str(e)}"}
 
-async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str = None, folder_id: str = None, custom_name: str = None) -> Dict[str, Any]:
+async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str = None, agent_id: str = None, folder_id: str = None, custom_name: str = None) -> Dict[str, Any]:
     """
     Download audio from YouTube video and transcribe using ElevenLabs
     Automatically splits long videos into chunks
@@ -1061,6 +1075,7 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
             content_type="text/plain",
             file_size=len(text_content),
             user_id=user_id,
+            agent_id=agent_id,
             extraction_result=extraction_result,
             folder_id=folder_id,
             folder=folder_name
@@ -1070,8 +1085,20 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
             logger.error(f"Failed to save transcription: {upload_result.get('error')}")
             return upload_result
         
-        logger.info(f"YouTube transcription saved successfully with ID: {upload_result['id']}")
+        file_id = upload_result["id"]
+        logger.info(f"YouTube transcription saved successfully with ID: {file_id}")
         print(f"✅ YouTube transcription saved to knowledge base!")
+        
+        # Queue document processing for embeddings and indexing
+        processing_result = await queue_document_processing(
+            file_id=file_id,
+            file_content=text_content,
+            content_type="text/plain",
+            filename=transcription_filename,
+            user_id=user_id,
+            agent_id=agent_id,
+            db=db
+        )
         
         return {
             "success": True,
@@ -1090,11 +1117,12 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
                 "preview": combined_text[:200] + "..." if len(combined_text) > 200 else combined_text
             },
             "file": {
-                "id": upload_result["id"],
+                "id": file_id,
                 "name": transcription_filename,
                 "url": upload_result["url"],
                 "s3_key": upload_result["s3_key"]
-            }
+            },
+            "processing": processing_result
         }
         
     except Exception as e:
@@ -1109,7 +1137,7 @@ async def transcribe_youtube_video(youtube_url: str, db: Session, user_id: str =
             youtube_service.cleanup_files(temp_files)
 
 
-async def scrape_and_save_website(url: str, db: Session, user_id: str = None, folder_id: str = None, folder: str = "Uncategorized", custom_name: str = None) -> Dict[str, Any]:
+async def scrape_and_save_website(url: str, db: Session, user_id: str = None, agent_id: str = None, folder_id: Optional[str] = None, folder: str = "Uncategorized", custom_name: Optional[str] = None) -> Dict[str, Any]:
     """Scrape website content and save to knowledge base"""
     try:
         logger.info(f"🌐 Starting website scraping for URL: {url}")
@@ -1179,12 +1207,14 @@ async def scrape_and_save_website(url: str, db: Session, user_id: str = None, fo
         
         # Save to knowledge base using existing file service
         file_service = FileService(db)
+        text_content = content.encode('utf-8')
         upload_result = file_service.upload_file(
-            file_content=content.encode('utf-8'),
+            file_content=text_content,
             file_name=filename,
             content_type="text/plain",
-            file_size=len(content.encode('utf-8')),
+            file_size=len(text_content),
             user_id=user_id,
+            agent_id=agent_id,
             extraction_result=extraction_result,
             folder_id=folder_id,
             folder=folder_name
@@ -1194,8 +1224,20 @@ async def scrape_and_save_website(url: str, db: Session, user_id: str = None, fo
             logger.error(f"Failed to save scraped content: {upload_result.get('error')}")
             return upload_result
         
-        logger.info(f"Website content saved successfully with ID: {upload_result['id']}")
+        file_id = upload_result["id"]
+        logger.info(f"Website content saved successfully with ID: {file_id}")
         print(f"✅ Website content saved to knowledge base!")
+        
+        # Queue document processing for embeddings and indexing
+        processing_result = await queue_document_processing(
+            file_id=file_id,
+            file_content=text_content,
+            content_type="text/plain",
+            filename=filename,
+            user_id=user_id,
+            agent_id=agent_id,
+            db=db
+        )
         
         return {
             "success": True,
@@ -1213,11 +1255,12 @@ async def scrape_and_save_website(url: str, db: Session, user_id: str = None, fo
                 "preview": content[:200] + "..." if len(content) > 200 else content
             },
             "file": {
-                "id": upload_result["id"],
+                "id": file_id,
                 "name": filename,
                 "url": upload_result["url"],
                 "s3_key": upload_result["s3_key"]
-            }
+            },
+            "processing": processing_result
         }
         
     except Exception as e:

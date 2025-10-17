@@ -7,7 +7,8 @@ from models.expert import Expert, ExpertCreate, ExpertContent, ExpertResponse
 from controllers.expert_controller import (
     create_expert, get_expert, list_experts, upload_expert_content, 
     ask_expert, update_expert, delete_expert, create_expert_with_elevenlabs,
-    get_expert_from_db, list_experts_from_db, delete_expert_from_db, update_expert_in_db
+    get_expert_from_db, list_experts_from_db, delete_expert_from_db, update_expert_in_db,
+    add_user_knowledge_tool_to_existing_agent
 )
 from controllers.knowledge_base_controller import process_expert_files
 from services.expert_service import ExpertService
@@ -225,6 +226,35 @@ async def process_expert_files_route(expert_id: str, file_ids: List[str], db: Se
         
     except Exception as e:
         logger.error(f"Error processing expert files: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+@router.post("/{expert_id}/add-knowledge-tool", response_model=dict)
+async def add_knowledge_tool_to_expert(
+    expert_id: str,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_required)
+):
+    """Add user-knowledge-base tool to an existing expert that doesn't have it"""
+    try:
+        result = await add_user_knowledge_tool_to_existing_agent(
+            db=db,
+            expert_id=expert_id,
+            user_id=current_user_id
+        )
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result["error"]
+            )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error adding knowledge tool to expert: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)

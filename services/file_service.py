@@ -67,8 +67,10 @@ class FileService:
                     logger.error(f"FileService: Invalid folder_id format: {folder_id}, error: {e}")
                     return {"success": False, "error": f"Invalid folder_id format: {folder_id}"}
             else:
-                # If no folder_id provided, try to find or create "Uncategorized" folder for this agent
+                # If no folder_id provided, try to find or create "Uncategorized" folder for this user/agent
                 query = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized")
+                if user_uuid:
+                    query = query.filter(FolderDB.user_id == user_uuid)
                 if agent_id:
                     query = query.filter(FolderDB.agent_id == agent_id)
                 else:
@@ -79,12 +81,28 @@ class FileService:
                     folder_uuid = uncategorized_folder.id
                     logger.info(f"FileService: Using existing Uncategorized folder: {folder_uuid}")
                 else:
-                    # Create Uncategorized folder if it doesn't exist for this agent
-                    uncategorized_folder = FolderDB(name="Uncategorized", user_id=user_uuid, agent_id=agent_id)
-                    self.db.add(uncategorized_folder)
-                    self.db.flush()  # Get the ID without committing
-                    folder_uuid = uncategorized_folder.id
-                    logger.info(f"FileService: Created new Uncategorized folder: {folder_uuid} for agent: {agent_id}")
+                    # Create Uncategorized folder if it doesn't exist for this user/agent
+                    try:
+                        uncategorized_folder = FolderDB(name="Uncategorized", user_id=user_uuid, agent_id=agent_id)
+                        self.db.add(uncategorized_folder)
+                        self.db.flush()  # Get the ID without committing
+                        folder_uuid = uncategorized_folder.id
+                        logger.info(f"FileService: Created new Uncategorized folder: {folder_uuid} for agent: {agent_id}")
+                    except Exception as e:
+                        # If creation fails (e.g., duplicate), try to find it again
+                        self.db.rollback()
+                        query = self.db.query(FolderDB).filter(FolderDB.name == "Uncategorized")
+                        if user_uuid:
+                            query = query.filter(FolderDB.user_id == user_uuid)
+                        if agent_id:
+                            query = query.filter(FolderDB.agent_id == agent_id)
+                        uncategorized_folder = query.first()
+                        if uncategorized_folder:
+                            folder_uuid = uncategorized_folder.id
+                            logger.info(f"FileService: Found existing Uncategorized folder after conflict: {folder_uuid}")
+                        else:
+                            logger.error(f"FileService: Failed to create or find Uncategorized folder: {e}")
+                            raise
             
             # Determine processing status based on extraction result
             # If extraction was successful, mark as completed
